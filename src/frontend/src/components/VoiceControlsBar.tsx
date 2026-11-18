@@ -43,9 +43,12 @@ export const VoiceControlsBar: React.FC<VoiceControlsBarProps> = ({
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
-        padding: "12px 20px",
+        flexWrap: "wrap",
+        gap: "10px",
+        padding: "10px 16px",
         background: "#1e1f22",
         borderTop: "1px solid #2b2d31",
+        flexShrink: 0,
       }}
     >
       <div>
@@ -61,7 +64,7 @@ export const VoiceControlsBar: React.FC<VoiceControlsBarProps> = ({
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
         <button
           type="button"
           onClick={onToggleMicMute}

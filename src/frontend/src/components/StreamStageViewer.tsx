@@ -42,13 +42,17 @@ export const StreamStageViewer: React.FC = () => {
       <div
         style={{
           flex: 1,
+          minWidth: 0,
+          minHeight: 0,
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
+          textAlign: "center",
           color: "#949ba4",
           gap: "8px",
           padding: "24px",
+          overflow: "hidden",
         }}
       >
         <div style={{ fontSize: "36px" }}>📺</div>
@@ -68,6 +72,8 @@ export const StreamStageViewer: React.FC = () => {
       ref={containerRef}
       style={{
         flex: 1,
+        minWidth: 0,
+        minHeight: 0,
         display: "flex",
         flexDirection: "column",
         background: "#111214",
@@ -155,6 +161,8 @@ export const StreamStageViewer: React.FC = () => {
       <div
         style={{
           flex: 1,
+          minWidth: 0,
+          minHeight: 0,
           background: "#000000",
           borderRadius: "8px",
           display: "flex",
@@ -172,6 +180,8 @@ export const StreamStageViewer: React.FC = () => {
           style={{
             width: "100%",
             height: "100%",
+            maxWidth: "100%",
+            maxHeight: "100%",
             objectFit: "contain",
           }}
         />

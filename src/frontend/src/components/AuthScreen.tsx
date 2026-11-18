@@ -48,26 +48,29 @@ export const AuthScreen: React.FC = () => {
 
   return (
     <div
+      className="no-scrollbar"
       style={{
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100vh",
+        width: "100%",
+        height: "100%",
         background: "#111214",
-        padding: "24px",
+        padding: "16px",
+        overflowY: "auto",
+        overflowX: "hidden",
       }}
     >
       <div
         style={{
+          margin: "auto",
           width: "100%",
           maxWidth: "420px",
           background: "#2b2d31",
           borderRadius: "10px",
-          padding: "28px",
+          padding: "clamp(16px, 3vw, 24px)",
           boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
           display: "flex",
           flexDirection: "column",
-          gap: "18px",
+          gap: "14px",
         }}
       >
         <div>

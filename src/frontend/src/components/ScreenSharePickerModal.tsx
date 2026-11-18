@@ -174,13 +174,14 @@ export const ScreenSharePickerModal: React.FC<ScreenSharePickerModalProps> = ({
         </div>
 
         <div
+          className="no-scrollbar"
           style={{
             flex: 1,
+            minHeight: 0,
             overflowY: "auto",
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
             gap: "10px",
-            minHeight: "200px",
             padding: "4px",
           }}
         >

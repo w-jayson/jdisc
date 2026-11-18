@@ -42,7 +42,7 @@ export const ServerConnectionForm: React.FC = () => {
       >
         ENDEREÇO DO SERVIDOR JDISC
       </label>
-      <div style={{ display: "flex", gap: "8px" }}>
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
         <input
           id="server-url-input"
           type="url"
@@ -56,7 +56,8 @@ export const ServerConnectionForm: React.FC = () => {
           }}
           placeholder="http://localhost:5000"
           style={{
-            flex: 1,
+            flex: "1 1 180px",
+            minWidth: 0,
             padding: "8px 10px",
             borderRadius: "4px",
             border: "1px solid #3f4147",

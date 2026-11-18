@@ -66,7 +66,7 @@ export const StreamAudioMixerControl: React.FC<
         </div>
 
         {audioMode !== "none" && (
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
             <button
               type="button"
               onClick={() =>

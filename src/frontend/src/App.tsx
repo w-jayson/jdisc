@@ -66,7 +66,9 @@ export const App: React.FC = () => {
     return (
       <div
         style={{
-          height: "100vh",
+          height: "100%",
+          width: "100%",
+          overflow: "hidden",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -84,7 +86,7 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", width: "100vw" }}>
+    <div style={{ display: "flex", height: "100%", width: "100%", overflow: "hidden" }}>
       <RoomSidebar
         onJoinRoom={(roomId) => void joinRoom(roomId)}
         onUpdateParticipantVolume={(userId, vol) =>
@@ -96,6 +98,8 @@ export const App: React.FC = () => {
       <main
         style={{
           flex: 1,
+          minWidth: 0,
+          minHeight: 0,
           display: "flex",
           flexDirection: "column",
           background: "#313338",

@@ -27,12 +27,16 @@ export const RoomSidebar: React.FC<RoomSidebarProps> = ({
   return (
     <aside
       style={{
-        width: "280px",
+        width: "clamp(200px, 24vw, 280px)",
+        flexShrink: 0,
+        height: "100%",
+        minHeight: 0,
         background: "#2b2d31",
         display: "flex",
         flexDirection: "column",
         borderRight: "1px solid #1e1f22",
         userSelect: "none",
+        overflow: "hidden",
       }}
     >
       <div
@@ -65,7 +69,16 @@ export const RoomSidebar: React.FC<RoomSidebarProps> = ({
         </button>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "12px 8px" }}>
+      <div
+        className="no-scrollbar"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          overflowX: "hidden",
+          padding: "12px 8px",
+        }}
+      >
         {rooms.map((room) => {
           const isCurrentRoom = room.id === activeRoomId;
           const activeCount = room.participants.length;
@@ -93,7 +106,16 @@ export const RoomSidebar: React.FC<RoomSidebarProps> = ({
                   fontWeight: 600,
                 }}
               >
-                <span>🔊 {room.name}</span>
+                <span
+                  style={{
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  🔊 {room.name}
+                </span>
                 <span
                   style={{
                     fontSize: "11px",
@@ -144,6 +166,10 @@ export const RoomSidebar: React.FC<RoomSidebarProps> = ({
                         >
                           <span
                             style={{
+                              minWidth: 0,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
                               color: isSpeaking ? "#23a55a" : "#dbdee1",
                               fontWeight: isSpeaking ? 700 : 500,
                             }}
@@ -224,9 +250,21 @@ export const RoomSidebar: React.FC<RoomSidebarProps> = ({
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
+          gap: "8px",
         }}
       >
-        <div style={{ fontSize: "13px", fontWeight: 600 }}>{displayName}</div>
+        <div
+          style={{
+            fontSize: "13px",
+            fontWeight: 600,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {displayName}
+        </div>
         <button
           type="button"
           onClick={() => void logout()}

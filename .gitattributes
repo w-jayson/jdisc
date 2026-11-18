@@ -1,0 +1,48 @@
+# Auto-detect text files and normalize line endings to LF in the repository
+* text=auto eol=lf
+
+# Source code & project files (.NET, Rust/Tauri, TypeScript/React, Infra)
+*.cs text eol=lf
+*.csproj text eol=lf
+*.sln text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+Dockerfile* text eol=lf
+.env* text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.dockerignore text eol=lf
+
+# Windows scripts
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.exe binary
+*.dll binary

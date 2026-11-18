@@ -98,9 +98,12 @@ export const GlobalShortcutSettings: React.FC<GlobalShortcutSettingsProps> = ({
       }}
     >
       <div
+        className="no-scrollbar"
         style={{
           width: "100%",
           maxWidth: "480px",
+          maxHeight: "90%",
+          overflowY: "auto",
           background: "#2b2d31",
           borderRadius: "10px",
           padding: "24px",
