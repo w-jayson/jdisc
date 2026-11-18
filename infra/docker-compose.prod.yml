@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: jdisc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jdisc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-jdisc}
+    volumes:
+      - jdisc_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jdisc} -d ${POSTGRES_DB:-jdisc}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: jdisc-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: jdisc-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?Define LIVEKIT_API_KEY in .env}: ${LIVEKIT_API_SECRET:?Define LIVEKIT_API_SECRET in .env}"
+    ports:
+      - "7880:7880/tcp"
+      - "7881:7881/tcp"
+      - "7882:7882/udp"
+      # Restricted 100-port UDP range per Constitution Principle VI
+      - "50600-50700:50600-50700/udp"
+    volumes:
+      - ./livekit.prod.yaml:/etc/livekit.yaml:ro
+
+  api:
+    build:
+      context: ../src/backend
+      dockerfile: Dockerfile
+    container_name: jdisc-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-jdisc};Username=${POSTGRES_USER:-jdisc};Password=${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD in .env}
+      ConnectionStrings__Redis: redis:6379
+      Jwt__Issuer: ${JWT_ISSUER:-jdisc-api}
+      Jwt__Audience: ${JWT_AUDIENCE:-jdisc-client}
+      Jwt__Secret: ${JWT_SECRET:?Define JWT_SECRET in .env (min 32 chars)}
+      Auth__InviteCode: ${INVITE_CODE:?Define INVITE_CODE in .env}
+      LiveKit__ApiKey: ${LIVEKIT_API_KEY:?Define LIVEKIT_API_KEY in .env}
+      LiveKit__ApiSecret: ${LIVEKIT_API_SECRET:?Define LIVEKIT_API_SECRET in .env}
+      LiveKit__PublicUrl: ${LIVEKIT_PUBLIC_URL:?Define LIVEKIT_PUBLIC_URL in .env (e.g. ws://SEU_IP_DA_VPS:7880)}
+      LiveKit__InternalHttpUrl: http://livekit:7880
+    ports:
+      - "${API_PORT:-5000}:8080"
+
+volumes:
+  jdisc_pgdata:

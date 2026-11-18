@@ -1,0 +1,10 @@
+# Adicione estes blocos ao Caddyfile existente da sua VPS
+# (troque "seudominio.com" pelo seu domínio real)
+
+jdisc.seudominio.com {
+    reverse_proxy jdisc-api:8080
+}
+
+lk.seudominio.com {
+    reverse_proxy jdisc-livekit:7880
+}

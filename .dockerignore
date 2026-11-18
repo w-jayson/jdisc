@@ -1,0 +1,14 @@
+**/.git
+**/.vs
+**/.vscode
+**/bin
+**/obj
+**/node_modules
+**/target
+**/dist
+**/TestResults
+.env
+.env.*
+specs/
+.specify/
+.github/

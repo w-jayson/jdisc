@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: jdisc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jdisc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jdisc_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-jdisc}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - jdisc_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jdisc} -d ${POSTGRES_DB:-jdisc}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: jdisc-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: jdisc-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml --node-ip 127.0.0.1
+    ports:
+      - "7880:7880/tcp"
+      - "7881:7881/tcp"
+      - "7882:7882/udp"
+      # Restricted 100-port UDP range outside Windows WinNAT/Hyper-V excluded ports (50000-50562)
+      - "50600-50700:50600-50700/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  api:
+    build:
+      context: ../src/backend
+      dockerfile: Dockerfile
+    container_name: jdisc-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-jdisc};Username=${POSTGRES_USER:-jdisc};Password=${POSTGRES_PASSWORD:-jdisc_dev_password}
+      ConnectionStrings__Redis: redis:6379
+      Jwt__Issuer: ${JWT_ISSUER:-jdisc-api}
+      Jwt__Audience: ${JWT_AUDIENCE:-jdisc-client}
+      Jwt__Secret: ${JWT_SECRET:-replace-with-at-least-32-bytes-long-secret-key-for-jdisc-jwt}
+      Auth__InviteCode: ${INVITE_CODE:-JDISC-FRIENDS-2026}
+      LiveKit__ApiKey: ${LIVEKIT_API_KEY:-APIjdiscLocalKey01}
+      LiveKit__ApiSecret: ${LIVEKIT_API_SECRET:-SecretjdiscLocalKeyMustBeAtLeast32CharsLong01}
+      LiveKit__PublicUrl: ${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
+      LiveKit__InternalHttpUrl: ${LIVEKIT_INTERNAL_HTTP_URL:-http://livekit:7880}
+    ports:
+      - "5000:8080"
+
+volumes:
+  jdisc_pgdata:

@@ -1,0 +1,5 @@
+[build]
+target-dir = "C:/Users/weslley jayson/t"
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

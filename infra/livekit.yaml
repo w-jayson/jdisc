@@ -1,0 +1,15 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  port_range_start: 50600
+  port_range_end: 50700
+  use_external_ip: false
+keys:
+  APIjdiscLocalKey01: SecretjdiscLocalKeyMustBeAtLeast32CharsLong01
+webhook:
+  api_key: APIjdiscLocalKey01
+  urls:
+    - http://api:8080/api/webhooks/livekit
+logging:
+  level: info

@@ -1,0 +1,12 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  port_range_start: 50600
+  port_range_end: 50700
+  use_external_ip: true
+webhook:
+  urls:
+    - http://api:8080/api/webhooks/livekit
+logging:
+  level: info
