@@ -29,17 +29,28 @@ services:
     image: livekit/livekit-server:latest
     container_name: jdisc-livekit
     restart: unless-stopped
-    command: --config /etc/livekit.yaml
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?Define LIVEKIT_API_KEY in .env}: ${LIVEKIT_API_SECRET:?Define LIVEKIT_API_SECRET in .env}"
+      LIVEKIT_CONFIG: |
+        port: 7880
+        rtc:
+          tcp_port: 7881
+          udp_port: 7882
+          port_range_start: 50600
+          port_range_end: 50700
+          use_external_ip: true
+        webhook:
+          api_key: ${LIVEKIT_API_KEY}
+          urls:
+            - http://api:8080/api/webhooks/livekit
+        logging:
+          level: info
     ports:
       - "7880:7880/tcp"
       - "7881:7881/tcp"
       - "7882:7882/udp"
       # Restricted 100-port UDP range per Constitution Principle VI
       - "50600-50700:50600-50700/udp"
-    volumes:
-      - ./livekit.prod.yaml:/etc/livekit.yaml:ro
 
   api:
     build:
