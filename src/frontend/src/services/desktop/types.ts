@@ -36,6 +36,11 @@ export interface NoiseReductionConfig {
   webrtcNoiseSuppression: boolean;
 }
 
+export interface AudioDeviceConfig {
+  inputDeviceId: string | null;
+  outputDeviceId: string | null;
+}
+
 export interface AppSettings {
   serverUrl: string;
   authSession: AuthSession | null;
@@ -43,6 +48,7 @@ export interface AppSettings {
   streamAudioMix: AudioMixConfig;
   globalShortcut: GlobalShortcutConfig;
   noiseReduction: NoiseReductionConfig;
+  audioDevices: AudioDeviceConfig;
 }
 
 export interface CaptureSource {
@@ -69,9 +75,16 @@ export interface StartStreamRequest {
 export interface StreamSessionInfo {
   status: StreamLifecycleStatus;
   sourceId: string;
+  sourceTitle?: string;
   preset: StreamPreset;
   activeAudioMode: StreamAudioMode;
   audioWarning: string | null;
+}
+
+export interface StreamPreviewFrameEvent {
+  dataUrl: string;
+  width: number;
+  height: number;
 }
 
 export interface StreamStateChangedEvent {

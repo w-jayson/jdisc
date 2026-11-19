@@ -85,6 +85,15 @@ impl Default for NoiseReductionConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioDeviceConfig {
+    #[serde(default)]
+    pub input_device_id: Option<String>,
+    #[serde(default)]
+    pub output_device_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -95,6 +104,8 @@ pub struct AppSettings {
     pub global_shortcut: GlobalShortcutConfig,
     #[serde(default)]
     pub noise_reduction: NoiseReductionConfig,
+    #[serde(default)]
+    pub audio_devices: AudioDeviceConfig,
 }
 
 impl Default for AppSettings {
@@ -106,8 +117,20 @@ impl Default for AppSettings {
             stream_audio_mix: AudioMixConfig::default(),
             global_shortcut: GlobalShortcutConfig::default(),
             noise_reduction: NoiseReductionConfig::default(),
+            audio_devices: AudioDeviceConfig::default(),
         }
     }
+}
+
+fn normalize_device_id(id: Option<String>) -> Option<String> {
+    id.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 impl AppSettings {
@@ -131,6 +154,10 @@ impl AppSettings {
 
         self.noise_reduction.threshold_db = self.noise_reduction.threshold_db.clamp(-70, -15);
         self.noise_reduction.high_pass_hz = self.noise_reduction.high_pass_hz.clamp(0, 300);
+        self.audio_devices.input_device_id =
+            normalize_device_id(self.audio_devices.input_device_id);
+        self.audio_devices.output_device_id =
+            normalize_device_id(self.audio_devices.output_device_id);
 
         self
     }
@@ -221,6 +248,7 @@ impl AudioMixState {
 pub struct ActiveStreamState {
     pub room_id: Option<String>,
     pub source_id: Option<String>,
+    pub source_title: Option<String>,
     pub preset: Option<StreamPreset>,
     pub audio_mode: Option<StreamAudioMode>,
     pub status: StreamLifecycleStatus,
@@ -232,6 +260,7 @@ impl Default for ActiveStreamState {
         Self {
             room_id: None,
             source_id: None,
+            source_title: None,
             preset: None,
             audio_mode: None,
             status: StreamLifecycleStatus::Idle,
@@ -244,6 +273,7 @@ pub struct AppState {
     pub settings: Mutex<AppSettings>,
     pub active_stream: Mutex<ActiveStreamState>,
     pub audio_mix: Arc<AudioMixState>,
+    pub preview_enabled: Arc<AtomicBool>,
 }
 
 impl Default for AppState {
@@ -252,6 +282,7 @@ impl Default for AppState {
             settings: Mutex::new(AppSettings::default()),
             active_stream: Mutex::new(ActiveStreamState::default()),
             audio_mix: Arc::new(AudioMixState::default()),
+            preview_enabled: Arc::new(AtomicBool::new(true)),
         }
     }
 }
@@ -282,6 +313,10 @@ mod tests {
                 high_pass_hz: 900,
                 webrtc_noise_suppression: false,
             },
+            audio_devices: AudioDeviceConfig {
+                input_device_id: Some("  mic-1  ".to_string()),
+                output_device_id: Some("default".to_string()),
+            },
         };
 
         let normalized = raw.normalized();
@@ -291,6 +326,11 @@ mod tests {
         assert_eq!(normalized.stream_audio_mix.volume, 100);
         assert_eq!(normalized.noise_reduction.threshold_db, -70);
         assert_eq!(normalized.noise_reduction.high_pass_hz, 300);
+        assert_eq!(
+            normalized.audio_devices.input_device_id.as_deref(),
+            Some("mic-1")
+        );
+        assert_eq!(normalized.audio_devices.output_device_id, None);
     }
 
     #[test]
@@ -305,5 +345,6 @@ mod tests {
 
         let parsed: AppSettings = serde_json::from_str(legacy_json).expect("legacy JSON should parse");
         assert_eq!(parsed.noise_reduction, NoiseReductionConfig::default());
+        assert_eq!(parsed.audio_devices, AudioDeviceConfig::default());
     }
 }

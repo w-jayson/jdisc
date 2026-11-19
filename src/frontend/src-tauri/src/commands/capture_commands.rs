@@ -4,12 +4,14 @@ use crate::capture::video_wgc::{run_wgc_capture_loop, VideoCaptureExitReason};
 use crate::media::livekit_publisher::connect_and_publish_native_stream;
 use crate::state::{AppState, CaptureSource, StreamAudioMode, StreamLifecycleStatus, StreamPreset};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
 
 pub const EVENT_STREAM_STATE_CHANGED: &str = "desktop://stream-state-changed";
 pub const EVENT_AUDIO_WARNING: &str = "desktop://audio-warning";
+pub const EVENT_STREAM_PREVIEW_FRAME: &str = "desktop://stream-preview-frame";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,9 +29,18 @@ pub struct StartStreamRequest {
 pub struct StreamSessionInfo {
     pub status: StreamLifecycleStatus,
     pub source_id: String,
+    pub source_title: String,
     pub preset: StreamPreset,
     pub active_audio_mode: StreamAudioMode,
     pub audio_warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamPreviewFramePayload {
+    pub data_url: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -83,10 +94,13 @@ pub async fn start_screen_stream(
         active.status = StreamLifecycleStatus::Starting;
         active.room_id = Some(request.room_id.clone());
         active.source_id = Some(request.source_id.clone());
+        active.source_title = Some(matched_source.title.clone());
         active.preset = Some(request.preset);
         active.audio_mode = Some(request.audio_mode);
         active.cancel_token = Some(cancel_token.clone());
     }
+
+    state.preview_enabled.store(true, Ordering::Relaxed);
 
     let _ = app.emit(
         EVENT_STREAM_STATE_CHANGED,
@@ -170,6 +184,7 @@ pub async fn start_screen_stream(
     }
 
     let app_for_exit = app.clone();
+    let app_for_preview = app.clone();
     let cancel_for_exit = cancel_token.clone();
 
     if let Err(err) = run_wgc_capture_loop(
@@ -177,6 +192,17 @@ pub async fn start_screen_stream(
         request.preset,
         published.video_source,
         cancel_token.clone(),
+        Arc::clone(&state.preview_enabled),
+        move |data_url, width, height| {
+            let _ = app_for_preview.emit(
+                EVENT_STREAM_PREVIEW_FRAME,
+                StreamPreviewFramePayload {
+                    data_url,
+                    width,
+                    height,
+                },
+            );
+        },
         move |exit_reason| {
             cancel_for_exit.cancel();
             if let Some(app_state) = app_for_exit.try_state::<AppState>() {
@@ -236,10 +262,20 @@ pub async fn start_screen_stream(
     Ok(StreamSessionInfo {
         status: StreamLifecycleStatus::Streaming,
         source_id: request.source_id,
+        source_title: matched_source.title,
         preset: request.preset,
         active_audio_mode,
         audio_warning,
     })
+}
+
+#[tauri::command]
+pub fn set_stream_preview_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    state.preview_enabled.store(enabled, Ordering::Relaxed);
+    Ok(())
 }
 
 #[tauri::command]

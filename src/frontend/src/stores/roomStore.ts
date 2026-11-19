@@ -6,6 +6,8 @@ import type {
   StreamPreset,
 } from "../services/desktop/types";
 
+export const LOCAL_PREVIEW_STREAM_KEY = "__local_preview__";
+
 export interface RemoteScreenShareStream {
   streamKey: string;
   ownerUserId: string;
@@ -35,6 +37,9 @@ interface RoomState {
   localStreamPreset: StreamPreset;
   localStreamAudioMode: StreamAudioMode;
   localStreamWarning: string | null;
+  localStreamSourceTitle: string | null;
+  localStreamPreviewUrl: string | null;
+  localStreamPreviewEnabled: boolean;
   setRooms: (rooms: RoomSummaryDto[]) => void;
   updateParticipantAudioState: (
     roomId: string,
@@ -59,7 +64,10 @@ interface RoomState {
     preset?: StreamPreset;
     audioMode?: StreamAudioMode;
     warning?: string | null;
+    sourceTitle?: string | null;
   }) => void;
+  setLocalStreamPreviewUrl: (url: string | null) => void;
+  setLocalStreamPreviewEnabled: (enabled: boolean) => void;
 }
 
 export const useRoomStore = create<RoomState>((set) => ({
@@ -77,6 +85,9 @@ export const useRoomStore = create<RoomState>((set) => ({
   localStreamPreset: "720p30",
   localStreamAudioMode: "process_tree",
   localStreamWarning: null,
+  localStreamSourceTitle: null,
+  localStreamPreviewUrl: null,
+  localStreamPreviewEnabled: true,
   setRooms: (rooms) => set({ rooms }),
   updateParticipantAudioState: (roomId, userId, isMuted, isDeafened) =>
     set((state) => ({
@@ -100,23 +111,57 @@ export const useRoomStore = create<RoomState>((set) => ({
   setActiveSpeakerIds: (activeSpeakerIds) => set({ activeSpeakerIds }),
   setRemoteStreams: (remoteStreams) =>
     set((state) => {
-      const stillExists = remoteStreams.some(
-        (s) => s.streamKey === state.selectedStreamKey
-      );
+      const isLocalActive =
+        state.localStreamStatus === "streaming" ||
+        state.localStreamStatus === "starting";
+      const keepingLocalPreview =
+        isLocalActive && state.selectedStreamKey === LOCAL_PREVIEW_STREAM_KEY;
+      const stillExists =
+        keepingLocalPreview ||
+        remoteStreams.some((s) => s.streamKey === state.selectedStreamKey);
       const nextSelected = stillExists
         ? state.selectedStreamKey
-        : remoteStreams[0]?.streamKey ?? null;
+        : remoteStreams[0]?.streamKey ??
+          (isLocalActive ? LOCAL_PREVIEW_STREAM_KEY : null);
       return { remoteStreams, selectedStreamKey: nextSelected };
     }),
   setSelectedStreamKey: (selectedStreamKey) => set({ selectedStreamKey }),
   setLocalStreamState: (partial) =>
-    set((state) => ({
-      localStreamStatus: partial.status ?? state.localStreamStatus,
-      localStreamPreset: partial.preset ?? state.localStreamPreset,
-      localStreamAudioMode: partial.audioMode ?? state.localStreamAudioMode,
-      localStreamWarning:
-        partial.warning !== undefined
-          ? partial.warning
-          : state.localStreamWarning,
-    })),
+    set((state) => {
+      const nextStatus = partial.status ?? state.localStreamStatus;
+      const isStoppingOrEnded =
+        nextStatus === "idle" || nextStatus === "error";
+      const nextSelected =
+        isStoppingOrEnded &&
+        state.selectedStreamKey === LOCAL_PREVIEW_STREAM_KEY
+          ? state.remoteStreams[0]?.streamKey ?? null
+          : nextStatus === "starting" && !state.selectedStreamKey
+          ? LOCAL_PREVIEW_STREAM_KEY
+          : state.selectedStreamKey;
+
+      return {
+        localStreamStatus: nextStatus,
+        localStreamPreset: partial.preset ?? state.localStreamPreset,
+        localStreamAudioMode: partial.audioMode ?? state.localStreamAudioMode,
+        localStreamWarning:
+          partial.warning !== undefined
+            ? partial.warning
+            : state.localStreamWarning,
+        localStreamSourceTitle: isStoppingOrEnded
+          ? null
+          : partial.sourceTitle !== undefined
+          ? partial.sourceTitle
+          : state.localStreamSourceTitle,
+        localStreamPreviewUrl: isStoppingOrEnded
+          ? null
+          : state.localStreamPreviewUrl,
+        localStreamPreviewEnabled:
+          nextStatus === "starting" ? true : state.localStreamPreviewEnabled,
+        selectedStreamKey: nextSelected,
+      };
+    }),
+  setLocalStreamPreviewUrl: (localStreamPreviewUrl) =>
+    set({ localStreamPreviewUrl }),
+  setLocalStreamPreviewEnabled: (localStreamPreviewEnabled) =>
+    set({ localStreamPreviewEnabled }),
 }));

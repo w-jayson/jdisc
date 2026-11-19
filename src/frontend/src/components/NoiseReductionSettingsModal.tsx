@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  AudioDeviceConfig,
   NoiseReductionConfig,
   NoiseReductionPreset,
 } from "../services/desktop/types";
@@ -18,11 +19,20 @@ import {
 import { useDesktopSettingsStore } from "../stores/desktopSettingsStore";
 import { useRoomStore } from "../stores/roomStore";
 
+interface AudioDeviceOption {
+  deviceId: string;
+  label: string;
+}
+
 interface NoiseReductionSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onUpdateNoiseReduction: (
     config: NoiseReductionConfig,
+    persist?: boolean
+  ) => Promise<void>;
+  onUpdateAudioDevices: (
+    config: AudioDeviceConfig,
     persist?: boolean
   ) => Promise<void>;
 }
@@ -37,18 +47,86 @@ function dbToPercent(db: number): number {
 
 export const NoiseReductionSettingsModal: React.FC<
   NoiseReductionSettingsModalProps
-> = ({ isOpen, onClose, onUpdateNoiseReduction }) => {
+> = ({ isOpen, onClose, onUpdateNoiseReduction, onUpdateAudioDevices }) => {
   const config = useDesktopSettingsStore((s) => s.settings.noiseReduction);
+  const audioDevices = useDesktopSettingsStore((s) => s.settings.audioDevices);
   const callConnectionState = useRoomStore((s) => s.callConnectionState);
   const isInCall = callConnectionState !== "disconnected";
 
   const [inputDb, setInputDb] = useState<number>(MIN_DB_FLOOR);
   const [gateOpen, setGateOpen] = useState<boolean>(false);
   const [micPreviewError, setMicPreviewError] = useState<string | null>(null);
+  const [inputDeviceOptions, setInputDeviceOptions] = useState<
+    AudioDeviceOption[]
+  >([]);
+  const [outputDeviceOptions, setOutputDeviceOptions] = useState<
+    AudioDeviceOption[]
+  >([]);
+  const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [switchingDevice, setSwitchingDevice] = useState<boolean>(false);
 
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestConfigRef = useRef(config);
   latestConfigRef.current = config;
+
+  const refreshDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      return;
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs: AudioDeviceOption[] = [];
+      const outputs: AudioDeviceOption[] = [];
+
+      let inputIndex = 1;
+      let outputIndex = 1;
+
+      for (const device of devices) {
+        if (!device.deviceId || device.deviceId === "default") {
+          continue;
+        }
+        if (device.kind === "audioinput") {
+          inputs.push({
+            deviceId: device.deviceId,
+            label: device.label.trim() || `Microfone ${inputIndex}`,
+          });
+          inputIndex += 1;
+        } else if (device.kind === "audiooutput") {
+          outputs.push({
+            deviceId: device.deviceId,
+            label: device.label.trim() || `Alto-falante ${outputIndex}`,
+          });
+          outputIndex += 1;
+        }
+      }
+
+      setInputDeviceOptions(inputs);
+      setOutputDeviceOptions(outputs);
+      setDeviceError(null);
+    } catch {
+      setDeviceError("Não foi possível listar os dispositivos de áudio.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    void refreshDevices();
+
+    const mediaDevices = navigator.mediaDevices;
+    if (!mediaDevices?.addEventListener) {
+      return;
+    }
+    const handleDeviceChange = () => {
+      void refreshDevices();
+    };
+    mediaDevices.addEventListener("devicechange", handleDeviceChange);
+    return () => {
+      mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+    };
+  }, [isOpen, refreshDevices]);
 
   const schedulePersist = (nextConfig: NoiseReductionConfig) => {
     void onUpdateNoiseReduction(nextConfig, false);
@@ -98,19 +176,38 @@ export const NoiseReductionSettingsModal: React.FC<
       }
 
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            noiseSuppression:
-              config.enabled && config.webrtcNoiseSuppression,
-            echoCancellation: true,
-            autoGainControl: true,
-          },
-        });
+        const baseAudioConstraints: MediaTrackConstraints = {
+          noiseSuppression: config.enabled && config.webrtcNoiseSuppression,
+          echoCancellation: true,
+          autoGainControl: true,
+        };
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: audioDevices.inputDeviceId
+              ? {
+                  ...baseAudioConstraints,
+                  deviceId: { exact: audioDevices.inputDeviceId },
+                }
+              : baseAudioConstraints,
+          });
+        } catch {
+          if (audioDevices.inputDeviceId) {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: baseAudioConstraints,
+            });
+          } else {
+            throw new Error("MIC_ACCESS_FAILED");
+          }
+        }
 
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
+
+        // Re-enumerate after mic permission is granted so browser reveals full device labels
+        void refreshDevices();
 
         audioCtx = new window.AudioContext();
         const source = audioCtx.createMediaStreamSource(stream);
@@ -162,6 +259,8 @@ export const NoiseReductionSettingsModal: React.FC<
     config.enabled,
     config.webrtcNoiseSuppression,
     config.highPassHz,
+    audioDevices.inputDeviceId,
+    refreshDevices,
   ]);
 
   if (!isOpen) {
@@ -209,6 +308,52 @@ export const NoiseReductionSettingsModal: React.FC<
     void onUpdateNoiseReduction(DEFAULT_NOISE_REDUCTION_CONFIG, true);
   };
 
+  const handleInputDeviceChange = async (value: string) => {
+    setSwitchingDevice(true);
+    setDeviceError(null);
+    try {
+      await onUpdateAudioDevices(
+        {
+          ...audioDevices,
+          inputDeviceId: value || null,
+        },
+        true
+      );
+    } catch {
+      setDeviceError("Não foi possível trocar o dispositivo de entrada.");
+    } finally {
+      setSwitchingDevice(false);
+    }
+  };
+
+  const handleOutputDeviceChange = async (value: string) => {
+    setSwitchingDevice(true);
+    setDeviceError(null);
+    try {
+      await onUpdateAudioDevices(
+        {
+          ...audioDevices,
+          outputDeviceId: value || null,
+        },
+        true
+      );
+    } catch {
+      setDeviceError("Não foi possível trocar o dispositivo de saída.");
+    } finally {
+      setSwitchingDevice(false);
+    }
+  };
+
+  const selectedInputMissing =
+    Boolean(audioDevices.inputDeviceId) &&
+    !inputDeviceOptions.some((d) => d.deviceId === audioDevices.inputDeviceId);
+  const selectedOutputMissing =
+    Boolean(audioDevices.outputDeviceId) &&
+    !outputDeviceOptions.some((d) => d.deviceId === audioDevices.outputDeviceId);
+  const supportsOutputSelection =
+    typeof HTMLMediaElement !== "undefined" &&
+    "setSinkId" in HTMLMediaElement.prototype;
+
   const levelPct = dbToPercent(inputDb);
   const thresholdPct = dbToPercent(config.thresholdDb);
   const formattedDb =
@@ -250,7 +395,7 @@ export const NoiseReductionSettingsModal: React.FC<
           }}
         >
           <h2 style={{ margin: 0, fontSize: "18px", color: "#f2f3f5" }}>
-            Redutor de Ruído &amp; Áudio
+            Áudio &amp; Redutor de Ruído
           </h2>
           <button
             type="button"
@@ -265,6 +410,149 @@ export const NoiseReductionSettingsModal: React.FC<
           >
             ✕
           </button>
+        </div>
+
+        <div
+          style={{
+            padding: "12px",
+            borderRadius: "8px",
+            background: "#1e1f22",
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span
+              style={{
+                fontSize: "12px",
+                fontWeight: 600,
+                color: "#b5bac1",
+              }}
+            >
+              DISPOSITIVOS DE ÁUDIO
+            </span>
+            <button
+              type="button"
+              onClick={() => void refreshDevices()}
+              disabled={switchingDevice}
+              title="Atualizar lista de dispositivos"
+              style={{
+                padding: "3px 8px",
+                fontSize: "11px",
+                borderRadius: "4px",
+                border: "1px solid #3f4147",
+                background: "#2b2d31",
+                color: "#dbdee1",
+                cursor: switchingDevice ? "not-allowed" : "pointer",
+              }}
+            >
+              ↻ Atualizar
+            </button>
+          </div>
+
+          <label
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "4px",
+              fontSize: "12px",
+              color: "#dbdee1",
+            }}
+          >
+            <span style={{ color: "#949ba4", fontWeight: 600 }}>
+              Entrada (Microfone)
+            </span>
+            <select
+              value={audioDevices.inputDeviceId ?? ""}
+              disabled={switchingDevice}
+              onChange={(e) => void handleInputDeviceChange(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "8px 10px",
+                borderRadius: "6px",
+                border: "1px solid #3f4147",
+                background: "#111214",
+                color: "#f2f3f5",
+                fontSize: "13px",
+                cursor: switchingDevice ? "not-allowed" : "pointer",
+              }}
+            >
+              <option value="">Padrão do sistema</option>
+              {selectedInputMissing && audioDevices.inputDeviceId && (
+                <option value={audioDevices.inputDeviceId}>
+                  Dispositivo salvo (indisponível)
+                </option>
+              )}
+              {inputDeviceOptions.map((device) => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "4px",
+              fontSize: "12px",
+              color: "#dbdee1",
+            }}
+          >
+            <span style={{ color: "#949ba4", fontWeight: 600 }}>
+              Saída (Alto-falante / Fone)
+            </span>
+            <select
+              value={audioDevices.outputDeviceId ?? ""}
+              disabled={switchingDevice || !supportsOutputSelection}
+              onChange={(e) => void handleOutputDeviceChange(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "8px 10px",
+                borderRadius: "6px",
+                border: "1px solid #3f4147",
+                background: "#111214",
+                color: "#f2f3f5",
+                fontSize: "13px",
+                cursor:
+                  switchingDevice || !supportsOutputSelection
+                    ? "not-allowed"
+                    : "pointer",
+                opacity: supportsOutputSelection ? 1 : 0.6,
+              }}
+            >
+              <option value="">Padrão do sistema</option>
+              {selectedOutputMissing && audioDevices.outputDeviceId && (
+                <option value={audioDevices.outputDeviceId}>
+                  Dispositivo salvo (indisponível)
+                </option>
+              )}
+              {outputDeviceOptions.map((device) => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label}
+                </option>
+              ))}
+            </select>
+            {!supportsOutputSelection && (
+              <span style={{ fontSize: "11px", color: "#949ba4" }}>
+                Seleção de saída de áudio não é suportada neste navegador.
+              </span>
+            )}
+          </label>
+
+          {deviceError && (
+            <div style={{ fontSize: "11px", color: "#f0b232" }}>
+              {deviceError}
+            </div>
+          )}
         </div>
 
         <label

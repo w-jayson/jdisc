@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { issueRoomScreenshareToken } from "../services/api/roomsApi";
 import {
   onAudioWarning,
+  onStreamPreviewFrame,
   onStreamStateChanged,
   setStreamAudioMix as invokeSetStreamAudioMix,
   startScreenStream,
@@ -22,6 +23,9 @@ export function useDesktopStreaming() {
   const localStreamAudioMode = useRoomStore((s) => s.localStreamAudioMode);
   const localStreamWarning = useRoomStore((s) => s.localStreamWarning);
   const setLocalStreamState = useRoomStore((s) => s.setLocalStreamState);
+  const setLocalStreamPreviewUrl = useRoomStore(
+    (s) => s.setLocalStreamPreviewUrl
+  );
 
   const streamAudioMix = useDesktopSettingsStore(
     (s) => s.settings.streamAudioMix
@@ -35,6 +39,7 @@ export function useDesktopStreaming() {
   useEffect(() => {
     let unlistenState: (() => void) | undefined;
     let unlistenWarn: (() => void) | undefined;
+    let unlistenPreview: (() => void) | undefined;
 
     void onStreamStateChanged((payload) => {
       setLocalStreamState({
@@ -57,11 +62,18 @@ export function useDesktopStreaming() {
       unlistenWarn = fn;
     });
 
+    void onStreamPreviewFrame((payload) => {
+      setLocalStreamPreviewUrl(payload.dataUrl);
+    }).then((fn) => {
+      unlistenPreview = fn;
+    });
+
     return () => {
       unlistenState?.();
       unlistenWarn?.();
+      unlistenPreview?.();
     };
-  }, [setLocalStreamState]);
+  }, [setLocalStreamState, setLocalStreamPreviewUrl]);
 
   const startStream = useCallback(
     async (
@@ -98,6 +110,7 @@ export function useDesktopStreaming() {
           preset: sessionInfo.preset,
           audioMode: sessionInfo.activeAudioMode,
           warning: sessionInfo.audioWarning,
+          sourceTitle: sessionInfo.sourceTitle ?? null,
         });
 
         return true;

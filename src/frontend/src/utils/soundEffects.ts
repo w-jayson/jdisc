@@ -1,4 +1,33 @@
 let sharedAudioCtx: AudioContext | null = null;
+let preferredOutputDeviceId: string | null = null;
+
+type SinkCapableAudioContext = AudioContext & {
+  setSinkId?: (sinkId: string) => Promise<void>;
+};
+
+async function applySinkToContext(
+  ctx: AudioContext,
+  deviceId: string | null
+): Promise<void> {
+  const sinkCtx = ctx as SinkCapableAudioContext;
+  if (typeof sinkCtx.setSinkId !== "function") {
+    return;
+  }
+  try {
+    await sinkCtx.setSinkId(deviceId ?? "");
+  } catch {
+    if (deviceId) {
+      await sinkCtx.setSinkId("").catch(() => {});
+    }
+  }
+}
+
+export function setSoundEffectsOutputDevice(deviceId: string | null): void {
+  preferredOutputDeviceId = deviceId;
+  if (sharedAudioCtx && sharedAudioCtx.state !== "closed") {
+    void applySinkToContext(sharedAudioCtx, deviceId);
+  }
+}
 
 function getAudioContext(): AudioContext | null {
   if (typeof window === "undefined") {
@@ -11,8 +40,11 @@ function getAudioContext(): AudioContext | null {
   if (!AudioCtx) {
     return null;
   }
-  if (!sharedAudioCtx) {
+  if (!sharedAudioCtx || sharedAudioCtx.state === "closed") {
     sharedAudioCtx = new AudioCtx();
+    if (preferredOutputDeviceId) {
+      void applySinkToContext(sharedAudioCtx, preferredOutputDeviceId);
+    }
   }
   return sharedAudioCtx;
 }
@@ -38,6 +70,11 @@ function playTwoTone(freqA: number, freqB: number): void {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
 
     osc.start(now);
     osc.stop(now + 0.21);

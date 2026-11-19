@@ -5,6 +5,7 @@ import type {
   AudioWarningEvent,
   CaptureSource,
   StartStreamRequest,
+  StreamPreviewFrameEvent,
   StreamSessionInfo,
   StreamStateChangedEvent,
 } from "./types";
@@ -38,6 +39,27 @@ export async function setStreamAudioMix(config: AudioMixConfig): Promise<void> {
     return;
   }
   await invoke<void>("set_stream_audio_mix", { config });
+}
+
+export async function setStreamPreviewEnabled(enabled: boolean): Promise<void> {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  await invoke<void>("set_stream_preview_enabled", { enabled });
+}
+
+export async function onStreamPreviewFrame(
+  handler: (payload: StreamPreviewFrameEvent) => void
+): Promise<UnlistenFn> {
+  if (!isTauriEnvironment()) {
+    return () => {};
+  }
+  return listen<StreamPreviewFrameEvent>(
+    "desktop://stream-preview-frame",
+    (event) => {
+      handler(event.payload);
+    }
+  );
 }
 
 export async function onStreamStateChanged(

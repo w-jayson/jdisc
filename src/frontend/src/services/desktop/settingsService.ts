@@ -24,6 +24,10 @@ export async function getAppSettings(): Promise<AppSettings> {
           ...DEFAULT_APP_SETTINGS.noiseReduction,
           ...(parsed.noiseReduction ?? {}),
         },
+        audioDevices: {
+          ...DEFAULT_APP_SETTINGS.audioDevices,
+          ...(parsed.audioDevices ?? {}),
+        },
       };
     }
   } catch {

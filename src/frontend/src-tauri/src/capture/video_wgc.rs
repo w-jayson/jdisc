@@ -1,9 +1,16 @@
 use crate::state::StreamPreset;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use livekit::webrtc::prelude::{I420Buffer, VideoFrame, VideoRotation};
 use livekit::webrtc::video_source::native::NativeVideoSource;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use yuv::{bgra_to_yuv420, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix};
+
+pub const PREVIEW_MAX_WIDTH: u32 = 480;
+pub const PREVIEW_MAX_HEIGHT: u32 = 270;
+pub const PREVIEW_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoCaptureExitReason {
@@ -93,24 +100,105 @@ pub fn scale_bgra_frame_if_needed(
     (dst, dst_stride, target_w, target_h)
 }
 
-pub fn run_wgc_capture_loop<F>(
+/// Proportional nearest-neighbor downscale directly from BGRA to packed RGB for lightweight local preview.
+pub fn downscale_bgra_to_rgb_proportional(
+    src: &[u8],
+    src_stride: u32,
+    src_w: u32,
+    src_h: u32,
+    max_w: u32,
+    max_h: u32,
+) -> Option<(Vec<u8>, u32, u32)> {
+    if src_w < 2 || src_h < 2 || max_w < 2 || max_h < 2 {
+        return None;
+    }
+
+    let scale = (max_w as f64 / src_w as f64)
+        .min(max_h as f64 / src_h as f64)
+        .min(1.0);
+    let target_w = ((src_w as f64 * scale).round() as u32).clamp(2, max_w);
+    let target_h = ((src_h as f64 * scale).round() as u32).clamp(2, max_h);
+
+    let mut dst = vec![0u8; (target_w * target_h * 3) as usize];
+
+    for y in 0..target_h {
+        let src_y = ((y as u64 * src_h as u64) / target_h as u64) as u32;
+        let src_row_offset = (src_y * src_stride) as usize;
+        let dst_row_offset = (y * target_w * 3) as usize;
+
+        for x in 0..target_w {
+            let src_x = ((x as u64 * src_w as u64) / target_w as u64) as u32;
+            let s_idx = src_row_offset + (src_x * 4) as usize;
+            let d_idx = dst_row_offset + (x * 3) as usize;
+            if s_idx + 3 < src.len() && d_idx + 2 < dst.len() {
+                dst[d_idx] = src[s_idx + 2];
+                dst[d_idx + 1] = src[s_idx + 1];
+                dst[d_idx + 2] = src[s_idx];
+            }
+        }
+    }
+
+    Some((dst, target_w, target_h))
+}
+
+/// Encodes a packed RGB preview frame into a fast PNG data URL.
+pub fn encode_rgb_preview_data_url(rgb: &[u8], width: u32, height: u32) -> Option<String> {
+    if width < 2 || height < 2 || rgb.len() != (width * height * 3) as usize {
+        return None;
+    }
+
+    let mut png_bytes = Vec::with_capacity((width * height) as usize);
+    {
+        let mut encoder = png::Encoder::new(&mut png_bytes, width, height);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fastest);
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(rgb).ok()?;
+    }
+
+    Some(format!(
+        "data:image/png;base64,{}",
+        BASE64.encode(png_bytes)
+    ))
+}
+
+pub fn run_wgc_capture_loop<F, P>(
     source_id: String,
     preset: StreamPreset,
     video_source: NativeVideoSource,
     cancel_token: CancellationToken,
+    preview_enabled: Arc<AtomicBool>,
+    on_preview_frame: P,
     on_exit: F,
 ) -> Result<(), String>
 where
     F: FnOnce(VideoCaptureExitReason) + Send + 'static,
+    P: Fn(String, u32, u32) + Send + 'static,
 {
     #[cfg(windows)]
     {
-        win32_wgc::spawn_wgc_thread(source_id, preset, video_source, cancel_token, on_exit)
+        win32_wgc::spawn_wgc_thread(
+            source_id,
+            preset,
+            video_source,
+            cancel_token,
+            preview_enabled,
+            on_preview_frame,
+            on_exit,
+        )
     }
 
     #[cfg(not(windows))]
     {
-        let _ = (source_id, preset, video_source, cancel_token);
+        let _ = (
+            source_id,
+            preset,
+            video_source,
+            cancel_token,
+            preview_enabled,
+            on_preview_frame,
+        );
         on_exit(VideoCaptureExitReason::Cancelled);
         Ok(())
     }
@@ -119,8 +207,7 @@ where
 #[cfg(windows)]
 mod win32_wgc {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
+    use std::sync::mpsc;
     use windows::core::Interface;
     use windows::Foundation::TypedEventHandler;
     use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem};
@@ -140,15 +227,18 @@ mod win32_wgc {
     use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
     use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow};
 
-    pub fn spawn_wgc_thread<F>(
+    pub fn spawn_wgc_thread<F, P>(
         source_id: String,
         preset: StreamPreset,
         video_source: NativeVideoSource,
         cancel_token: CancellationToken,
+        preview_enabled: Arc<AtomicBool>,
+        on_preview_frame: P,
         on_exit: F,
     ) -> Result<(), String>
     where
         F: FnOnce(VideoCaptureExitReason) + Send + 'static,
+        P: Fn(String, u32, u32) + Send + 'static,
     {
         // Validate source_id format upfront
         let parsed_target = parse_capture_target(&source_id)?;
@@ -156,7 +246,14 @@ mod win32_wgc {
         std::thread::Builder::new()
             .name("jdisc-wgc-capture".to_string())
             .spawn(move || {
-                let reason = execute_wgc_session(parsed_target, preset, video_source, cancel_token);
+                let reason = execute_wgc_session(
+                    parsed_target,
+                    preset,
+                    video_source,
+                    cancel_token,
+                    preview_enabled,
+                    on_preview_frame,
+                );
                 on_exit(reason);
             })
             .map_err(|e| format!("WGC_THREAD_SPAWN_FAILED: {e}"))?;
@@ -206,14 +303,30 @@ mod win32_wgc {
         }
     }
 
-    fn execute_wgc_session(
+    fn execute_wgc_session<P>(
         target: CaptureTarget,
         preset: StreamPreset,
         video_source: NativeVideoSource,
         cancel_token: CancellationToken,
-    ) -> VideoCaptureExitReason {
+        preview_enabled: Arc<AtomicBool>,
+        on_preview_frame: P,
+    ) -> VideoCaptureExitReason
+    where
+        P: Fn(String, u32, u32) + Send + 'static,
+    {
         let (max_w, max_h, fps) = preset_dimensions_and_fps(preset);
         let frame_interval = Duration::from_micros(1_000_000 / fps as u64);
+
+        let (preview_tx, preview_rx) = mpsc::sync_channel::<(Vec<u8>, u32, u32)>(1);
+        let _preview_thread = std::thread::Builder::new()
+            .name("jdisc-wgc-preview".to_string())
+            .spawn(move || {
+                while let Ok((rgb, w, h)) = preview_rx.recv() {
+                    if let Some(data_url) = encode_rgb_preview_data_url(&rgb, w, h) {
+                        on_preview_frame(data_url, w, h);
+                    }
+                }
+            });
 
         let mut d3d_device: Option<ID3D11Device> = None;
         let mut d3d_context: Option<ID3D11DeviceContext> = None;
@@ -301,6 +414,8 @@ mod win32_wgc {
         }
 
         let mut last_frame_sent = Instant::now() - frame_interval;
+        let mut last_preview_sent = Instant::now() - PREVIEW_INTERVAL;
+        let mut preview_was_enabled = preview_enabled.load(Ordering::Relaxed);
         let mut last_valid_bgra: Option<(Vec<u8>, u32, u32, u32)> = None;
 
         while !cancel_token.is_cancelled() {
@@ -309,6 +424,24 @@ mod win32_wgc {
                 let _ = frame_pool.Close();
                 return VideoCaptureExitReason::SourceClosed;
             }
+
+            let is_preview_enabled = preview_enabled.load(Ordering::Relaxed);
+            if is_preview_enabled && !preview_was_enabled {
+                if let Some((ref bgra, stride, w, h)) = last_valid_bgra {
+                    if let Some((rgb, pw, ph)) = downscale_bgra_to_rgb_proportional(
+                        bgra,
+                        stride,
+                        w,
+                        h,
+                        PREVIEW_MAX_WIDTH,
+                        PREVIEW_MAX_HEIGHT,
+                    ) {
+                        let _ = preview_tx.try_send((rgb, pw, ph));
+                        last_preview_sent = Instant::now();
+                    }
+                }
+            }
+            preview_was_enabled = is_preview_enabled;
 
             if let CaptureTarget::Window(raw_hwnd) = target {
                 let hwnd = HWND(raw_hwnd as *mut _);
@@ -357,6 +490,26 @@ mod win32_wgc {
                                         let video_frame =
                                             VideoFrame::new(VideoRotation::VideoRotation0, i420);
                                         video_source.capture_frame(&video_frame);
+
+                                        if is_preview_enabled
+                                            && now.duration_since(last_preview_sent)
+                                                >= PREVIEW_INTERVAL
+                                        {
+                                            if let Some((rgb, pw, ph)) =
+                                                downscale_bgra_to_rgb_proportional(
+                                                    &scaled_bgra,
+                                                    scaled_stride,
+                                                    out_w,
+                                                    out_h,
+                                                    PREVIEW_MAX_WIDTH,
+                                                    PREVIEW_MAX_HEIGHT,
+                                                )
+                                            {
+                                                let _ = preview_tx.try_send((rgb, pw, ph));
+                                                last_preview_sent = now;
+                                            }
+                                        }
+
                                         last_valid_bgra =
                                             Some((scaled_bgra, scaled_stride, out_w, out_h));
                                         last_frame_sent = now;
@@ -432,5 +585,47 @@ mod win32_wgc {
 
             Some(scaled)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn downscales_bgra_to_rgb_preserving_aspect_ratio() {
+        // 1920x1080 BGRA frame filled with (B=10, G=20, R=30, A=255)
+        let w = 1920u32;
+        let h = 1080u32;
+        let stride = w * 4;
+        let mut bgra = vec![0u8; (stride * h) as usize];
+        for px in bgra.chunks_exact_mut(4) {
+            px[0] = 10;
+            px[1] = 20;
+            px[2] = 30;
+            px[3] = 255;
+        }
+
+        let (rgb, out_w, out_h) = downscale_bgra_to_rgb_proportional(
+            &bgra,
+            stride,
+            w,
+            h,
+            PREVIEW_MAX_WIDTH,
+            PREVIEW_MAX_HEIGHT,
+        )
+        .expect("preview downscale should succeed");
+
+        assert_eq!(out_w, 480);
+        assert_eq!(out_h, 270);
+        assert_eq!(rgb.len(), (480 * 270 * 3) as usize);
+        assert_eq!(&rgb[0..3], &[30, 20, 10]);
+    }
+
+    #[test]
+    fn encodes_rgb_preview_as_png_data_url() {
+        let rgb = vec![120u8; (4 * 4 * 3) as usize];
+        let url = encode_rgb_preview_data_url(&rgb, 4, 4).expect("PNG encode should succeed");
+        assert!(url.starts_with("data:image/png;base64,"));
     }
 }

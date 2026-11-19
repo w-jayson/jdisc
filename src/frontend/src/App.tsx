@@ -16,6 +16,7 @@ import { useVoiceCall } from "./hooks/useVoiceCall";
 import { getAppSettings } from "./services/desktop/settingsService";
 import { useAuthStore } from "./stores/authStore";
 import { useDesktopSettingsStore } from "./stores/desktopSettingsStore";
+import { setSoundEffectsOutputDevice } from "./utils/soundEffects";
 
 export const App: React.FC = () => {
   const hydrated = useDesktopSettingsStore((s) => s.hydrated);
@@ -30,6 +31,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     void getAppSettings().then(async (loaded) => {
       setSettings(loaded);
+      setSoundEffectsOutputDevice(loaded.audioDevices?.outputDeviceId ?? null);
       if (loaded.authSession) {
         await setSession(loaded.authSession);
       }
@@ -54,6 +56,7 @@ export const App: React.FC = () => {
     toggleDeafen,
     toggleNoiseReduction,
     updateNoiseReduction,
+    updateAudioDevices,
     updateParticipantVolume,
   } = useVoiceCall();
 
@@ -200,6 +203,7 @@ export const App: React.FC = () => {
         isOpen={isAudioSettingsOpen}
         onClose={() => setIsAudioSettingsOpen(false)}
         onUpdateNoiseReduction={updateNoiseReduction}
+        onUpdateAudioDevices={updateAudioDevices}
       />
       </div>
     </div>

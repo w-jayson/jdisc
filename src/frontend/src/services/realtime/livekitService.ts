@@ -18,10 +18,14 @@ import {
 import {
   playJoinRoomSound,
   playLeaveRoomSound,
+  setSoundEffectsOutputDevice,
 } from "../../utils/soundEffects";
 import { stopScreenStream } from "../desktop/captureService";
 import { saveAppSettings } from "../desktop/settingsService";
-import type { NoiseReductionConfig } from "../desktop/types";
+import type {
+  AudioDeviceConfig,
+  NoiseReductionConfig,
+} from "../desktop/types";
 import {
   type MicLevelSample,
   NoiseGateProcessor,
@@ -82,21 +86,38 @@ export function extractCompanionOwnerId(identity: string): string {
 }
 
 interface RemoteVoiceAudioNode {
+  track: RemoteTrack;
   element: HTMLAudioElement;
+  sourceNode: MediaStreamAudioSourceNode | null;
   gainNode: GainNode | null;
 }
 
+interface RemoteScreenAudioNode {
+  track: RemoteTrack;
+  element: HTMLAudioElement;
+}
+
+type SinkCapableAudioContext = AudioContext & {
+  setSinkId?: (sinkId: string) => Promise<void>;
+};
+
+type SinkCapableAudioElement = HTMLAudioElement & {
+  setSinkId?: (sinkId: string) => Promise<void>;
+};
+
 class LiveKitCallService {
   private room: Room | null = null;
-  private audioContext: AudioContext | null = null;
+  private playbackAudioContext: AudioContext | null = null;
+  private captureAudioContext: AudioContext | null = null;
   private voiceAudioNodes = new Map<string, RemoteVoiceAudioNode>();
-  private screenAudioElements = new Map<string, HTMLAudioElement>();
+  private screenAudioElements = new Map<string, RemoteScreenAudioNode>();
   private noiseProcessor: NoiseGateProcessor | null = null;
   private noiseProcessorTrack: LocalAudioTrack | null = null;
   private noiseProcessorUnsub: (() => void) | null = null;
   private micLevelListeners = new Set<(sample: MicLevelSample) => void>();
   private lastAppliedWebrtcNs: boolean | null = null;
   private noiseSyncQueue: Promise<void> = Promise.resolve();
+  private connectionEpoch = 0;
 
   public async connectToVoiceRoom(
     roomId: string,
@@ -104,22 +125,39 @@ class LiveKitCallService {
     livekitUrl: string,
     voiceToken: string
   ): Promise<void> {
+    const currentStore = useRoomStore.getState();
+    if (
+      this.room &&
+      currentStore.activeRoomId === roomId &&
+      this.room.state === ConnectionState.Connected
+    ) {
+      return;
+    }
+
+    const epoch = ++this.connectionEpoch;
+
     if (this.room) {
-      await this.disconnectFromVoiceRoom();
+      await this.disconnectFromVoiceRoom({ playLeaveSound: false });
+      if (epoch !== this.connectionEpoch) {
+        return;
+      }
     }
 
     const roomStore = useRoomStore.getState();
     roomStore.setCallConnectionState("connecting");
     roomStore.setActiveCall(roomId, roomName, livekitUrl);
 
-    const { noiseReduction } = useDesktopSettingsStore.getState().settings;
+    const { noiseReduction, audioDevices } =
+      useDesktopSettingsStore.getState().settings;
     const effectiveWebrtcNs =
       noiseReduction.enabled && noiseReduction.webrtcNoiseSuppression;
+    setSoundEffectsOutputDevice(audioDevices.outputDeviceId);
 
     const room = new Room({
       adaptiveStream: true,
       dynacast: true,
       audioCaptureDefaults: {
+        deviceId: audioDevices.inputDeviceId ?? undefined,
         noiseSuppression: effectiveWebrtcNs,
         echoCancellation: true,
         autoGainControl: true,
@@ -128,49 +166,126 @@ class LiveKitCallService {
     this.room = room;
     this.lastAppliedWebrtcNs = effectiveWebrtcNs;
 
-    this.registerRoomListeners(room, roomId);
+    this.registerRoomListeners(room, roomId, epoch);
 
-    await room.connect(livekitUrl, voiceToken, {
-      autoSubscribe: true,
-    });
+    try {
+      await room.connect(livekitUrl, voiceToken, {
+        autoSubscribe: true,
+      });
 
-    await room.localParticipant.setMicrophoneEnabled(true);
-    await this.syncNoiseReductionToLocalTrack();
+      if (epoch !== this.connectionEpoch || this.room !== room) {
+        room.removeAllListeners();
+        await room.disconnect(true).catch(() => {});
+        return;
+      }
 
-    roomStore.setLocalAudioFlags(false, false);
-    roomStore.setCallConnectionState("connected");
-    playJoinRoomSound();
+      if (audioDevices.outputDeviceId) {
+        await room
+          .switchActiveDevice("audiooutput", audioDevices.outputDeviceId)
+          .catch(() => {});
+      }
 
-    // Enforce self-screenshare suppression on any existing participants in the room
-    this.enforceSelfCompanionBlockOnAll(room);
-    this.rebuildRemoteStreamsList(room);
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true);
+      } catch (micErr) {
+        if (audioDevices.inputDeviceId) {
+          // Saved device may have been unplugged; fall back to system default
+          await room.localParticipant.setMicrophoneEnabled(true, {
+            deviceId: "default",
+            noiseSuppression: effectiveWebrtcNs,
+            echoCancellation: true,
+            autoGainControl: true,
+          });
+        } else {
+          throw micErr;
+        }
+      }
+
+      if (epoch !== this.connectionEpoch || this.room !== room) {
+        room.removeAllListeners();
+        await room.disconnect(true).catch(() => {});
+        return;
+      }
+
+      await this.syncNoiseReductionToLocalTrack();
+
+      if (epoch !== this.connectionEpoch || this.room !== room) {
+        room.removeAllListeners();
+        await room.disconnect(true).catch(() => {});
+        return;
+      }
+
+      roomStore.setLocalAudioFlags(false, false);
+      roomStore.setCallConnectionState("connected");
+      playJoinRoomSound();
+
+      // Enforce self-screenshare suppression on any existing participants in the room
+      this.enforceSelfCompanionBlockOnAll(room);
+      this.rebuildRemoteStreamsList(room);
+    } catch (err) {
+      if (this.room === room) {
+        await this.disconnectFromVoiceRoom({ playLeaveSound: false });
+      } else {
+        room.removeAllListeners();
+        await room.disconnect(true).catch(() => {});
+      }
+      throw err;
+    }
   }
 
-  public async disconnectFromVoiceRoom(): Promise<void> {
+  public async disconnectFromVoiceRoom(options?: {
+    playLeaveSound?: boolean;
+  }): Promise<void> {
+    const playLeaveSound = options?.playLeaveSound ?? true;
     const roomStore = useRoomStore.getState();
     if (roomStore.localStreamStatus !== "idle") {
       await stopScreenStream();
       roomStore.setLocalStreamState({ status: "idle", warning: null });
     }
 
-    this.clearNoiseProcessorRefs();
+    const roomToDisconnect = this.room;
+    this.room = null;
     this.lastAppliedWebrtcNs = null;
 
-    if (this.room) {
+    if (roomToDisconnect) {
+      roomToDisconnect.removeAllListeners();
+
+      const micPub = roomToDisconnect.localParticipant.getTrackPublication(
+        Track.Source.Microphone
+      );
+      const localAudioTrack = micPub?.track;
+      this.clearNoiseProcessorRefs();
+
+      if (localAudioTrack instanceof LocalAudioTrack) {
+        try {
+          await localAudioTrack.stopProcessor();
+        } catch {
+          // Ignore if no processor is attached or track is already stopped
+        }
+      }
+
+      await this.noiseSyncQueue;
+
       try {
-        await this.room.disconnect();
+        await roomToDisconnect.disconnect(true);
       } catch {
         // Ignore disconnect errors
       }
-      this.room = null;
+    } else {
+      this.clearNoiseProcessorRefs();
+      await this.noiseSyncQueue;
     }
 
     this.cleanupAllAudioNodes();
+    await this.closeAudioContexts();
+
     roomStore.setRemoteStreams([]);
     roomStore.setActiveSpeakerIds([]);
     roomStore.setActiveCall(null, null, null);
     roomStore.setCallConnectionState("disconnected");
-    playLeaveRoomSound();
+    if (playLeaveSound) {
+      playLeaveRoomSound();
+    }
   }
 
   public async setMicMuted(muted: boolean): Promise<void> {
@@ -261,6 +376,50 @@ class LiveKitCallService {
     });
   }
 
+  public async updateAudioDevices(
+    config: AudioDeviceConfig,
+    persist = true
+  ): Promise<void> {
+    const store = useDesktopSettingsStore.getState();
+    const previous = store.settings.audioDevices;
+    store.setAudioDevices(config);
+    const normalized = useDesktopSettingsStore.getState().settings.audioDevices;
+
+    setSoundEffectsOutputDevice(normalized.outputDeviceId);
+
+    if (this.room) {
+      if (previous.inputDeviceId !== normalized.inputDeviceId) {
+        try {
+          await this.room.switchActiveDevice(
+            "audioinput",
+            normalized.inputDeviceId ?? "default"
+          );
+        } catch {
+          if (normalized.inputDeviceId) {
+            await this.room
+              .switchActiveDevice("audioinput", "default")
+              .catch(() => {});
+          }
+        }
+        await this.syncNoiseReductionToLocalTrack();
+      }
+
+      if (previous.outputDeviceId !== normalized.outputDeviceId) {
+        await this.room
+          .switchActiveDevice(
+            "audiooutput",
+            normalized.outputDeviceId ?? "default"
+          )
+          .catch(() => {});
+        await this.applyOutputDeviceToAllTargets(normalized.outputDeviceId);
+      }
+    }
+
+    if (persist) {
+      await saveAppSettings(useDesktopSettingsStore.getState().settings);
+    }
+  }
+
   public isNoiseProcessorActive(): boolean {
     return Boolean(this.noiseProcessor && this.noiseProcessorTrack);
   }
@@ -322,15 +481,25 @@ class LiveKitCallService {
         return;
       }
 
-      if (!this.audioContext && window.AudioContext) {
-        this.audioContext = new window.AudioContext();
-      }
       if (
-        this.audioContext &&
-        !(localAudioTrack as unknown as { audioContext?: AudioContext })
-          .audioContext
+        (!this.captureAudioContext ||
+          this.captureAudioContext.state === "closed") &&
+        window.AudioContext
       ) {
-        await localAudioTrack.setAudioContext(this.audioContext);
+        this.captureAudioContext = new window.AudioContext({
+          latencyHint: "interactive",
+        });
+      }
+      if (this.captureAudioContext) {
+        if (this.captureAudioContext.state === "suspended") {
+          await this.captureAudioContext.resume().catch(() => {});
+        }
+        const currentTrackCtx = (
+          localAudioTrack as unknown as { audioContext?: AudioContext }
+        ).audioContext;
+        if (currentTrackCtx !== this.captureAudioContext) {
+          await localAudioTrack.setAudioContext(this.captureAudioContext);
+        }
       }
 
       this.clearNoiseProcessorRefs();
@@ -363,13 +532,22 @@ class LiveKitCallService {
     this.noiseProcessorTrack = null;
   }
 
-  private registerRoomListeners(room: Room, _roomId: string): void {
+  private registerRoomListeners(
+    room: Room,
+    _roomId: string,
+    epoch: number
+  ): void {
+    const isStale = () =>
+      this.room !== room || epoch !== this.connectionEpoch;
+
     room.on(RoomEvent.LocalTrackPublished, (publication) => {
+      if (isStale()) return;
       if (publication.source === Track.Source.Microphone) {
         void this.syncNoiseReductionToLocalTrack();
       }
     });
     room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
+      if (isStale()) return;
       const store = useRoomStore.getState();
       if (state === ConnectionState.Connected) {
         store.setCallConnectionState("connected");
@@ -381,16 +559,19 @@ class LiveKitCallService {
     });
 
     room.on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
+      if (isStale()) return;
       const ids = speakers.map((s) => extractCompanionOwnerId(s.identity));
       useRoomStore.getState().setActiveSpeakerIds(ids);
     });
 
     room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
+      if (isStale()) return;
       this.guardParticipantPublications(participant);
       this.rebuildRemoteStreamsList(room);
     });
 
     room.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
+      if (isStale()) return;
       this.detachVoiceAudio(participant.identity);
       this.detachScreenAudio(participant.identity);
       this.rebuildRemoteStreamsList(room);
@@ -399,6 +580,7 @@ class LiveKitCallService {
     room.on(
       RoomEvent.TrackPublished,
       (publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+        if (isStale()) return;
         const localUserId = useAuthStore.getState().session?.userId;
         if (
           isOwnCompanionParticipant(
@@ -421,6 +603,7 @@ class LiveKitCallService {
         publication: RemoteTrackPublication,
         participant: RemoteParticipant
       ) => {
+        if (isStale()) return;
         const localUserId = useAuthStore.getState().session?.userId;
         if (
           isOwnCompanionParticipant(
@@ -456,6 +639,7 @@ class LiveKitCallService {
         publication: RemoteTrackPublication,
         participant: RemoteParticipant
       ) => {
+        if (isStale()) return;
         if (
           track.kind === Track.Kind.Audio &&
           publication.source === Track.Source.Microphone
@@ -472,6 +656,7 @@ class LiveKitCallService {
     );
 
     room.on(RoomEvent.TrackUnpublished, () => {
+      if (isStale()) return;
       this.rebuildRemoteStreamsList(room);
     });
   }
@@ -550,33 +735,77 @@ class LiveKitCallService {
     this.detachVoiceAudio(userId);
     const element = track.attach() as HTMLAudioElement;
     element.autoplay = true;
+    const outputDeviceId =
+      useDesktopSettingsStore.getState().settings.audioDevices.outputDeviceId;
 
+    let sourceNode: MediaStreamAudioSourceNode | null = null;
     let gainNode: GainNode | null = null;
     try {
       const AudioCtx = window.AudioContext;
       if (AudioCtx && element.srcObject instanceof MediaStream) {
-        if (!this.audioContext) {
-          this.audioContext = new AudioCtx();
+        const createdNewContext =
+          !this.playbackAudioContext ||
+          this.playbackAudioContext.state === "closed";
+        if (createdNewContext) {
+          this.playbackAudioContext = new AudioCtx({
+            latencyHint: "interactive",
+          });
+          if (outputDeviceId) {
+            void this.applyOutputDeviceToAudioContext(
+              this.playbackAudioContext,
+              outputDeviceId
+            );
+          }
         }
-        const source = this.audioContext.createMediaStreamSource(
-          element.srcObject
-        );
-        gainNode = this.audioContext.createGain();
-        source.connect(gainNode);
-        gainNode.connect(this.audioContext.destination);
-        element.muted = true; // Output via WebAudio GainNode to support 0-200% boost
+        if (
+          this.playbackAudioContext &&
+          this.playbackAudioContext.state === "suspended"
+        ) {
+          void this.playbackAudioContext.resume().catch(() => {});
+        }
+        if (this.playbackAudioContext) {
+          sourceNode = this.playbackAudioContext.createMediaStreamSource(
+            element.srcObject
+          );
+          gainNode = this.playbackAudioContext.createGain();
+          sourceNode.connect(gainNode);
+          gainNode.connect(this.playbackAudioContext.destination);
+          element.muted = true; // Output via WebAudio GainNode to support 0-200% boost
+        }
       }
     } catch {
+      sourceNode?.disconnect();
+      gainNode?.disconnect();
+      sourceNode = null;
       gainNode = null;
     }
 
-    this.voiceAudioNodes.set(userId, { element, gainNode });
+    if (!gainNode && outputDeviceId) {
+      void this.applyOutputDeviceToElement(element, outputDeviceId);
+    }
+
+    this.voiceAudioNodes.set(userId, { track, element, sourceNode, gainNode });
     this.applyDeafenAndVolumes();
   }
 
   private detachVoiceAudio(userId: string): void {
     const existing = this.voiceAudioNodes.get(userId);
     if (existing) {
+      try {
+        existing.sourceNode?.disconnect();
+      } catch {
+        // Ignore disconnect errors on already-disconnected nodes
+      }
+      try {
+        existing.gainNode?.disconnect();
+      } catch {
+        // Ignore disconnect errors on already-disconnected nodes
+      }
+      try {
+        existing.track.detach(existing.element);
+      } catch {
+        // Ignore detach errors if track is already disposed
+      }
       existing.element.pause();
       existing.element.srcObject = null;
       existing.element.remove();
@@ -588,16 +817,26 @@ class LiveKitCallService {
     this.detachScreenAudio(companionIdentity);
     const element = track.attach() as HTMLAudioElement;
     element.autoplay = true;
-    this.screenAudioElements.set(companionIdentity, element);
+    const outputDeviceId =
+      useDesktopSettingsStore.getState().settings.audioDevices.outputDeviceId;
+    if (outputDeviceId) {
+      void this.applyOutputDeviceToElement(element, outputDeviceId);
+    }
+    this.screenAudioElements.set(companionIdentity, { track, element });
     this.applyDeafenAndVolumes();
   }
 
   private detachScreenAudio(companionIdentity: string): void {
     const existing = this.screenAudioElements.get(companionIdentity);
     if (existing) {
-      existing.pause();
-      existing.srcObject = null;
-      existing.remove();
+      try {
+        existing.track.detach(existing.element);
+      } catch {
+        // Ignore detach errors if track is already disposed
+      }
+      existing.element.pause();
+      existing.element.srcObject = null;
+      existing.element.remove();
       this.screenAudioElements.delete(companionIdentity);
     }
   }
@@ -618,8 +857,8 @@ class LiveKitCallService {
       }
     }
 
-    for (const el of this.screenAudioElements.values()) {
-      el.muted = isDeafened;
+    for (const node of this.screenAudioElements.values()) {
+      node.element.muted = isDeafened;
     }
   }
 
@@ -630,6 +869,90 @@ class LiveKitCallService {
     for (const id of Array.from(this.screenAudioElements.keys())) {
       this.detachScreenAudio(id);
     }
+  }
+
+  private async applyOutputDeviceToAudioContext(
+    ctx: AudioContext,
+    outputDeviceId: string | null
+  ): Promise<void> {
+    const sinkCtx = ctx as SinkCapableAudioContext;
+    if (typeof sinkCtx.setSinkId !== "function") {
+      return;
+    }
+    try {
+      await sinkCtx.setSinkId(outputDeviceId ?? "");
+    } catch {
+      if (outputDeviceId) {
+        await sinkCtx.setSinkId("").catch(() => {});
+      }
+    }
+  }
+
+  private async applyOutputDeviceToElement(
+    element: HTMLAudioElement,
+    outputDeviceId: string | null
+  ): Promise<void> {
+    const sinkEl = element as SinkCapableAudioElement;
+    if (typeof sinkEl.setSinkId !== "function") {
+      return;
+    }
+    try {
+      await sinkEl.setSinkId(outputDeviceId ?? "");
+    } catch {
+      if (outputDeviceId) {
+        await sinkEl.setSinkId("").catch(() => {});
+      }
+    }
+  }
+
+  private async applyOutputDeviceToAllTargets(
+    outputDeviceId: string | null
+  ): Promise<void> {
+    const tasks: Promise<void>[] = [];
+
+    if (
+      this.playbackAudioContext &&
+      this.playbackAudioContext.state !== "closed"
+    ) {
+      tasks.push(
+        this.applyOutputDeviceToAudioContext(
+          this.playbackAudioContext,
+          outputDeviceId
+        )
+      );
+    }
+
+    for (const node of this.voiceAudioNodes.values()) {
+      if (!node.gainNode) {
+        tasks.push(
+          this.applyOutputDeviceToElement(node.element, outputDeviceId)
+        );
+      }
+    }
+
+    for (const node of this.screenAudioElements.values()) {
+      tasks.push(this.applyOutputDeviceToElement(node.element, outputDeviceId));
+    }
+
+    await Promise.all(tasks);
+  }
+
+  private async closeAudioContexts(): Promise<void> {
+    const contexts = [this.captureAudioContext, this.playbackAudioContext];
+    this.captureAudioContext = null;
+    this.playbackAudioContext = null;
+
+    await Promise.all(
+      contexts.map(async (ctx) => {
+        if (ctx && ctx.state !== "closed") {
+          try {
+            await ctx.close();
+          } catch {
+            // Ignore close errors
+          }
+        }
+      })
+    );
   }
 }
 
