@@ -125,7 +125,7 @@ mod win32_wgc {
     use windows::Foundation::TypedEventHandler;
     use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem};
     use windows::Graphics::DirectX::DirectXPixelFormat;
-    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Foundation::{HMODULE, HWND};
     use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
     use windows::Win32::Graphics::Direct3D11::{
         D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
@@ -175,7 +175,7 @@ mod win32_wgc {
                 .parse::<usize>()
                 .map_err(|_| "SOURCE_NOT_FOUND".to_string())?;
             let hwnd = HWND(val as *mut _);
-            let exists = unsafe { IsWindow(hwnd).as_bool() };
+            let exists = unsafe { IsWindow(Some(hwnd)).as_bool() };
             if !exists {
                 return Err("SOURCE_NOT_FOUND".to_string());
             }
@@ -222,7 +222,7 @@ mod win32_wgc {
             D3D11CreateDevice(
                 None,
                 D3D_DRIVER_TYPE_HARDWARE,
-                None,
+                HMODULE::default(),
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 None,
                 D3D11_SDK_VERSION,
@@ -313,7 +313,7 @@ mod win32_wgc {
             if let CaptureTarget::Window(raw_hwnd) = target {
                 let hwnd = HWND(raw_hwnd as *mut _);
                 unsafe {
-                    if !IsWindow(hwnd).as_bool() {
+                    if !IsWindow(Some(hwnd)).as_bool() {
                         let _ = session.Close();
                         let _ = frame_pool.Close();
                         return VideoCaptureExitReason::SourceClosed;

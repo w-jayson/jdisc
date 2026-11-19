@@ -137,8 +137,8 @@ mod win32_wasapi {
     use std::sync::mpsc;
     use std::sync::{Condvar, Mutex};
     use std::time::Duration;
-    use windows::core::{implement, IUnknown, Interface, HRESULT, PCWSTR};
-    use windows::Win32::Foundation::{CloseHandle, BOOL, HANDLE};
+    use windows::core::{implement, IUnknown, Interface, Ref, HRESULT, PCWSTR};
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Media::Audio::{
         eConsole, eRender, ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
         IActivateAudioInterfaceCompletionHandler, IActivateAudioInterfaceCompletionHandler_Impl,
@@ -181,7 +181,7 @@ mod win32_wasapi {
     impl IActivateAudioInterfaceCompletionHandler_Impl for ActivationHandler_Impl {
         fn ActivateCompleted(
             &self,
-            _operation: Option<&IActivateAudioInterfaceAsyncOperation>,
+            _operation: Ref<'_, IActivateAudioInterfaceAsyncOperation>,
         ) -> windows::core::Result<()> {
             let (lock, cvar) = &*self.done;
             if let Ok(mut finished) = lock.lock() {
@@ -356,7 +356,7 @@ mod win32_wasapi {
             )
             .map_err(|e| format!("Initialize (process loopback): {e}"))?;
 
-        let event = CreateEventW(None, BOOL(0), BOOL(0), PCWSTR::null()).map_err(|e| format!("CreateEventW: {e}"))?;
+        let event = CreateEventW(None, false, false, PCWSTR::null()).map_err(|e| format!("CreateEventW: {e}"))?;
         if let Err(e) = audio_client.SetEventHandle(event) {
             let _ = CloseHandle(event);
             return Err(format!("SetEventHandle: {e}"));

@@ -54,8 +54,8 @@ mod win32_impl {
     use std::mem::size_of;
     use std::os::windows::ffi::OsStringExt;
     use std::path::Path;
-    use windows::core::PWSTR;
-    use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, RECT, TRUE};
+    use windows::core::{BOOL, PWSTR};
+    use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows::Win32::Graphics::Gdi::{
         DeleteObject, EnumDisplayMonitors, GetDC, GetDIBits, GetMonitorInfoW, GetObjectW,
@@ -131,12 +131,12 @@ mod win32_impl {
         let ctx = &mut *(lparam.0 as *mut EnumWindowsContext);
 
         if !IsWindowVisible(hwnd).as_bool() {
-            return TRUE;
+            return BOOL(1);
         }
 
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
         if (ex_style & WS_EX_TOOLWINDOW.0) != 0 {
-            return TRUE;
+            return BOOL(1);
         }
 
         let mut cloaked: u32 = 0;
@@ -147,31 +147,31 @@ mod win32_impl {
             size_of::<u32>() as u32,
         );
         if cloaked != 0 {
-            return TRUE;
+            return BOOL(1);
         }
 
         let title_len = GetWindowTextLengthW(hwnd);
         if title_len <= 0 {
-            return TRUE;
+            return BOOL(1);
         }
 
         let mut title_buf = vec![0u16; (title_len + 1) as usize];
         let read_len = GetWindowTextW(hwnd, &mut title_buf);
         if read_len <= 0 {
-            return TRUE;
+            return BOOL(1);
         }
         let title = OsString::from_wide(&title_buf[..read_len as usize])
             .to_string_lossy()
             .trim()
             .to_string();
         if title.is_empty() {
-            return TRUE;
+            return BOOL(1);
         }
 
         let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
         if pid == 0 || pid == ctx.current_pid {
-            return TRUE;
+            return BOOL(1);
         }
 
         let mut rect = RECT::default();
@@ -179,7 +179,7 @@ mod win32_impl {
         let width = (rect.right - rect.left).max(0) as u32;
         let height = (rect.bottom - rect.top).max(0) as u32;
         if !IsIconic(hwnd).as_bool() && (width < 64 || height < 64) {
-            return TRUE;
+            return BOOL(1);
         }
 
         let process_name = query_process_exe_name(pid);
@@ -198,7 +198,7 @@ mod win32_impl {
             supports_process_audio_isolation: ctx.process_audio_supported,
         });
 
-        TRUE
+        BOOL(1)
     }
 
     unsafe fn query_process_exe_name(pid: u32) -> Option<String> {
@@ -275,17 +275,17 @@ mod win32_impl {
 
         let mut bmp = BITMAP::default();
         let got_obj = GetObjectW(
-            hbm_color,
+            hbm_color.into(),
             size_of::<BITMAP>() as i32,
             Some(&mut bmp as *mut BITMAP as *mut _),
         );
 
         if got_obj == 0 || bmp.bmWidth <= 0 || bmp.bmHeight <= 0 {
             if !hbm_color.is_invalid() {
-                let _ = DeleteObject(hbm_color);
+                let _ = DeleteObject(hbm_color.into());
             }
             if !hbm_mask.is_invalid() {
-                let _ = DeleteObject(hbm_mask);
+                let _ = DeleteObject(hbm_mask.into());
             }
             return None;
         }
@@ -302,7 +302,7 @@ mod win32_impl {
         bmi.bmiHeader.biCompression = BI_RGB.0;
 
         let mut pixels = vec![0u8; (width * height * 4) as usize];
-        let hdc = GetDC(HWND::default());
+        let hdc = GetDC(None);
         let lines = GetDIBits(
             hdc,
             hbm_color,
@@ -312,13 +312,13 @@ mod win32_impl {
             &mut bmi,
             DIB_RGB_COLORS,
         );
-        let _ = ReleaseDC(HWND::default(), hdc);
+        let _ = ReleaseDC(None, hdc);
 
         if !hbm_color.is_invalid() {
-            let _ = DeleteObject(hbm_color);
+            let _ = DeleteObject(hbm_color.into());
         }
         if !hbm_mask.is_invalid() {
-            let _ = DeleteObject(hbm_mask);
+            let _ = DeleteObject(hbm_mask.into());
         }
         let _ = DestroyIcon(hicon);
 
@@ -350,7 +350,7 @@ mod win32_impl {
         let mut monitors: Vec<CaptureSource> = Vec::new();
         unsafe {
             let lparam = LPARAM(&mut monitors as *mut Vec<CaptureSource> as isize);
-            let _ = EnumDisplayMonitors(HDC::default(), None, Some(enum_monitors_proc), lparam);
+            let _ = EnumDisplayMonitors(None, None, Some(enum_monitors_proc), lparam);
         }
         Ok(monitors)
     }
@@ -387,6 +387,6 @@ mod win32_impl {
             });
         }
 
-        TRUE
+        BOOL(1)
     }
 }
