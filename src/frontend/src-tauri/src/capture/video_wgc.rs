@@ -197,10 +197,10 @@ mod win32_wgc {
         unsafe {
             match *target {
                 CaptureTarget::Window(val) => interop
-                    .CreateForWindow::<_, GraphicsCaptureItem>(HWND(val as *mut _))
+                    .CreateForWindow::<GraphicsCaptureItem>(HWND(val as *mut _))
                     .map_err(|e| format!("WGC_CREATE_FOR_WINDOW_FAILED: {e}")),
                 CaptureTarget::Monitor(val) => interop
-                    .CreateForMonitor::<_, GraphicsCaptureItem>(HMONITOR(val as *mut _))
+                    .CreateForMonitor::<GraphicsCaptureItem>(HMONITOR(val as *mut _))
                     .map_err(|e| format!("WGC_CREATE_FOR_MONITOR_FAILED: {e}")),
             }
         }
