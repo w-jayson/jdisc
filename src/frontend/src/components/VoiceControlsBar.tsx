@@ -1,5 +1,9 @@
 import React from "react";
-import type { StreamLifecycleStatus } from "../services/desktop/types";
+import type {
+  NoiseReductionConfig,
+  StreamLifecycleStatus,
+} from "../services/desktop/types";
+import { NOISE_REDUCTION_PRESETS } from "../services/realtime/noiseReductionProcessor";
 
 interface VoiceControlsBarProps {
   activeRoomName: string | null;
@@ -10,9 +14,12 @@ interface VoiceControlsBarProps {
     | "reconnecting";
   isMicMuted: boolean;
   isDeafened: boolean;
+  noiseReduction: NoiseReductionConfig;
   localStreamStatus: StreamLifecycleStatus;
   onToggleMicMute: () => void;
   onToggleDeafen: () => void;
+  onToggleNoiseReduction: () => void;
+  onOpenAudioSettings: () => void;
   onOpenScreenSharePicker: () => void;
   onStopScreenShare: () => void;
   onLeaveRoom: () => void;
@@ -23,9 +30,12 @@ export const VoiceControlsBar: React.FC<VoiceControlsBarProps> = ({
   callConnectionState,
   isMicMuted,
   isDeafened,
+  noiseReduction,
   localStreamStatus,
   onToggleMicMute,
   onToggleDeafen,
+  onToggleNoiseReduction,
+  onOpenAudioSettings,
   onOpenScreenSharePicker,
   onStopScreenShare,
   onLeaveRoom,
@@ -36,6 +46,10 @@ export const VoiceControlsBar: React.FC<VoiceControlsBarProps> = ({
 
   const isStreaming =
     localStreamStatus === "streaming" || localStreamStatus === "starting";
+  const noisePresetLabel =
+    noiseReduction.preset === "custom"
+      ? `${noiseReduction.thresholdDb} dB`
+      : NOISE_REDUCTION_PRESETS[noiseReduction.preset].label;
 
   return (
     <div
@@ -95,6 +109,50 @@ export const VoiceControlsBar: React.FC<VoiceControlsBarProps> = ({
           }}
         >
           {isDeafened ? "🎧🚫 Desensurdecer" : "🎧 Ensurdecer"}
+        </button>
+
+        <button
+          type="button"
+          onClick={onToggleNoiseReduction}
+          title={
+            noiseReduction.enabled
+              ? `Redutor de ruído ativo (${noisePresetLabel}). Clique para desativar.`
+              : "Redutor de ruído desativado. Clique para ativar."
+          }
+          style={{
+            padding: "8px 12px",
+            borderRadius: "6px",
+            border: noiseReduction.enabled
+              ? "1px solid #23a55a"
+              : "1px solid #3f4147",
+            background: noiseReduction.enabled
+              ? "rgba(35, 165, 90, 0.2)"
+              : "#383a40",
+            color: "#ffffff",
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          {noiseReduction.enabled
+            ? `✨ Ruído: ON (${noisePresetLabel})`
+            : "✨ Ruído: OFF"}
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenAudioSettings}
+          title="Configurar Redutor de Ruído e Limiar do Microfone"
+          style={{
+            padding: "8px 10px",
+            borderRadius: "6px",
+            border: "none",
+            background: "#383a40",
+            color: "#dbdee1",
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          ⚙️ Áudio
         </button>
 
         {!isStreaming ? (

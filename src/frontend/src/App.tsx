@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { AppUpdateBanner } from "./components/AppUpdateBanner";
 import { AuthScreen } from "./components/AuthScreen";
 import { GlobalShortcutSettings } from "./components/GlobalShortcutSettings";
+import { NoiseReductionSettingsModal } from "./components/NoiseReductionSettingsModal";
 import { RoomSidebar } from "./components/RoomSidebar";
 import { ScreenSharePickerModal } from "./components/ScreenSharePickerModal";
 import { StreamAudioMixerControl } from "./components/StreamAudioMixerControl";
@@ -24,6 +25,7 @@ export const App: React.FC = () => {
 
   const [isScreenPickerOpen, setIsScreenPickerOpen] = useState(false);
   const [isShortcutSettingsOpen, setIsShortcutSettingsOpen] = useState(false);
+  const [isAudioSettingsOpen, setIsAudioSettingsOpen] = useState(false);
 
   useEffect(() => {
     void getAppSettings().then(async (loaded) => {
@@ -43,12 +45,15 @@ export const App: React.FC = () => {
     callConnectionState,
     isMicMuted,
     isDeafened,
+    noiseReduction,
     joinError,
     clearJoinError,
     joinRoom,
     leaveRoom,
     toggleMicMute,
     toggleDeafen,
+    toggleNoiseReduction,
+    updateNoiseReduction,
     updateParticipantVolume,
   } = useVoiceCall();
 
@@ -105,6 +110,7 @@ export const App: React.FC = () => {
           void updateParticipantVolume(userId, vol)
         }
         onOpenShortcutSettings={() => setIsShortcutSettingsOpen(true)}
+        onOpenAudioSettings={() => setIsAudioSettingsOpen(true)}
       />
 
       <main
@@ -167,9 +173,12 @@ export const App: React.FC = () => {
           callConnectionState={callConnectionState}
           isMicMuted={isMicMuted}
           isDeafened={isDeafened}
+          noiseReduction={noiseReduction}
           localStreamStatus={localStreamStatus}
           onToggleMicMute={() => void toggleMicMute()}
           onToggleDeafen={() => void toggleDeafen()}
+          onToggleNoiseReduction={() => void toggleNoiseReduction()}
+          onOpenAudioSettings={() => setIsAudioSettingsOpen(true)}
           onOpenScreenSharePicker={() => setIsScreenPickerOpen(true)}
           onStopScreenShare={() => void stopStream()}
           onLeaveRoom={() => void leaveRoom()}
@@ -185,6 +194,12 @@ export const App: React.FC = () => {
       <GlobalShortcutSettings
         isOpen={isShortcutSettingsOpen}
         onClose={() => setIsShortcutSettingsOpen(false)}
+      />
+
+      <NoiseReductionSettingsModal
+        isOpen={isAudioSettingsOpen}
+        onClose={() => setIsAudioSettingsOpen(false)}
+        onUpdateNoiseReduction={updateNoiseReduction}
       />
       </div>
     </div>

@@ -4,7 +4,12 @@ import type {
   AudioMixConfig,
   AuthSession,
   GlobalShortcutConfig,
+  NoiseReductionConfig,
 } from "../services/desktop/types";
+import {
+  DEFAULT_NOISE_REDUCTION_CONFIG,
+  normalizeNoiseReductionConfig,
+} from "../services/realtime/noiseReductionProcessor";
 
 const DEFAULT_SERVER_URL =
   import.meta.env.VITE_DEFAULT_SERVER_URL || "http://localhost:5000";
@@ -15,6 +20,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   participantVolumes: {},
   streamAudioMix: { volume: 100, muted: false },
   globalShortcut: { enabled: false, mode: "toggle", accelerator: null },
+  noiseReduction: DEFAULT_NOISE_REDUCTION_CONFIG,
 };
 
 interface DesktopSettingsState {
@@ -26,6 +32,7 @@ interface DesktopSettingsState {
   setParticipantVolume: (userId: string, volume: number) => void;
   setStreamAudioMix: (mix: AudioMixConfig) => void;
   setGlobalShortcut: (shortcut: GlobalShortcutConfig) => void;
+  setNoiseReduction: (noiseReduction: NoiseReductionConfig) => void;
 }
 
 export const useDesktopSettingsStore = create<DesktopSettingsState>((set) => ({
@@ -34,8 +41,10 @@ export const useDesktopSettingsStore = create<DesktopSettingsState>((set) => ({
   setSettings: (settings) =>
     set({
       settings: {
+        ...DEFAULT_APP_SETTINGS,
         ...settings,
         serverUrl: settings.serverUrl.trim().replace(/\/+$/, "") || DEFAULT_SERVER_URL,
+        noiseReduction: normalizeNoiseReductionConfig(settings.noiseReduction),
       },
       hydrated: true,
     }),
@@ -73,5 +82,12 @@ export const useDesktopSettingsStore = create<DesktopSettingsState>((set) => ({
   setGlobalShortcut: (globalShortcut) =>
     set((state) => ({
       settings: { ...state.settings, globalShortcut },
+    })),
+  setNoiseReduction: (noiseReduction) =>
+    set((state) => ({
+      settings: {
+        ...state.settings,
+        noiseReduction: normalizeNoiseReductionConfig(noiseReduction),
+      },
     })),
 }));

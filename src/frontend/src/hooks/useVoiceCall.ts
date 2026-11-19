@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { ApiError } from "../services/api/httpClient";
 import { issueRoomVoiceToken } from "../services/api/roomsApi";
 import { saveAppSettings } from "../services/desktop/settingsService";
+import type { NoiseReductionConfig } from "../services/desktop/types";
 import { livekitService } from "../services/realtime/livekitService";
 import { useDesktopSettingsStore } from "../stores/desktopSettingsStore";
 import { useRoomStore } from "../stores/roomStore";
@@ -12,6 +13,9 @@ export function useVoiceCall() {
   const callConnectionState = useRoomStore((s) => s.callConnectionState);
   const isMicMuted = useRoomStore((s) => s.isMicMuted);
   const isDeafened = useRoomStore((s) => s.isDeafened);
+  const noiseReduction = useDesktopSettingsStore(
+    (s) => s.settings.noiseReduction
+  );
   const [joinError, setJoinError] = useState<string | null>(null);
 
   const joinRoom = useCallback(async (roomId: string) => {
@@ -64,18 +68,32 @@ export function useVoiceCall() {
     []
   );
 
+  const toggleNoiseReduction = useCallback(async () => {
+    await livekitService.toggleNoiseReduction();
+  }, []);
+
+  const updateNoiseReduction = useCallback(
+    async (config: NoiseReductionConfig, persist = true) => {
+      await livekitService.updateNoiseReduction(config, persist);
+    },
+    []
+  );
+
   return {
     activeRoomId,
     activeRoomName,
     callConnectionState,
     isMicMuted,
     isDeafened,
+    noiseReduction,
     joinError,
     clearJoinError: () => setJoinError(null),
     joinRoom,
     leaveRoom,
     toggleMicMute,
     toggleDeafen,
+    toggleNoiseReduction,
+    updateNoiseReduction,
     updateParticipantVolume,
   };
 }

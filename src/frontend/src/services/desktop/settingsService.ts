@@ -16,9 +16,14 @@ export async function getAppSettings(): Promise<AppSettings> {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_FALLBACK_KEY);
     if (raw) {
+      const parsed = JSON.parse(raw) as Partial<AppSettings>;
       return {
         ...DEFAULT_APP_SETTINGS,
-        ...(JSON.parse(raw) as Partial<AppSettings>),
+        ...parsed,
+        noiseReduction: {
+          ...DEFAULT_APP_SETTINGS.noiseReduction,
+          ...(parsed.noiseReduction ?? {}),
+        },
       };
     }
   } catch {

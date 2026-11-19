@@ -7,12 +7,14 @@ interface RoomSidebarProps {
   onJoinRoom: (roomId: string) => void;
   onUpdateParticipantVolume: (userId: string, volume: number) => void;
   onOpenShortcutSettings: () => void;
+  onOpenAudioSettings: () => void;
 }
 
 export const RoomSidebar: React.FC<RoomSidebarProps> = ({
   onJoinRoom,
   onUpdateParticipantVolume,
   onOpenShortcutSettings,
+  onOpenAudioSettings,
 }) => {
   const rooms = useRoomStore((s) => s.rooms);
   const activeRoomId = useRoomStore((s) => s.activeRoomId);
@@ -51,22 +53,40 @@ export const RoomSidebar: React.FC<RoomSidebarProps> = ({
         <strong style={{ fontSize: "15px", color: "#f2f3f5" }}>
           Canais de Voz
         </strong>
-        <button
-          type="button"
-          onClick={onOpenShortcutSettings}
-          title="Configurar Atalhos Globais (Toggle Mute / Push-to-Talk)"
-          style={{
-            padding: "4px 8px",
-            fontSize: "11px",
-            background: "#383a40",
-            color: "#dbdee1",
-            border: "none",
-            borderRadius: "4px",
-            cursor: "pointer",
-          }}
-        >
-          Atalhos
-        </button>
+        <div style={{ display: "flex", gap: "6px" }}>
+          <button
+            type="button"
+            onClick={onOpenAudioSettings}
+            title="Configurar Redutor de Ruído e Áudio do Microfone"
+            style={{
+              padding: "4px 8px",
+              fontSize: "11px",
+              background: "#383a40",
+              color: "#dbdee1",
+              border: "none",
+              borderRadius: "4px",
+              cursor: "pointer",
+            }}
+          >
+            Áudio
+          </button>
+          <button
+            type="button"
+            onClick={onOpenShortcutSettings}
+            title="Configurar Atalhos Globais (Toggle Mute / Push-to-Talk)"
+            style={{
+              padding: "4px 8px",
+              fontSize: "11px",
+              background: "#383a40",
+              color: "#dbdee1",
+              border: "none",
+              borderRadius: "4px",
+              cursor: "pointer",
+            }}
+          >
+            Atalhos
+          </button>
+        </div>
       </div>
 
       <div

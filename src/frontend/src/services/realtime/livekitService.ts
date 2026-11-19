@@ -1,5 +1,6 @@
 import {
   ConnectionState,
+  LocalAudioTrack,
   Participant,
   RemoteParticipant,
   RemoteTrack,
@@ -19,6 +20,12 @@ import {
   playLeaveRoomSound,
 } from "../../utils/soundEffects";
 import { stopScreenStream } from "../desktop/captureService";
+import { saveAppSettings } from "../desktop/settingsService";
+import type { NoiseReductionConfig } from "../desktop/types";
+import {
+  type MicLevelSample,
+  NoiseGateProcessor,
+} from "./noiseReductionProcessor";
 import { signalrService } from "./signalrService";
 
 export const SCREENSHARE_IDENTITY_SUFFIX = ":screenshare";
@@ -84,6 +91,12 @@ class LiveKitCallService {
   private audioContext: AudioContext | null = null;
   private voiceAudioNodes = new Map<string, RemoteVoiceAudioNode>();
   private screenAudioElements = new Map<string, HTMLAudioElement>();
+  private noiseProcessor: NoiseGateProcessor | null = null;
+  private noiseProcessorTrack: LocalAudioTrack | null = null;
+  private noiseProcessorUnsub: (() => void) | null = null;
+  private micLevelListeners = new Set<(sample: MicLevelSample) => void>();
+  private lastAppliedWebrtcNs: boolean | null = null;
+  private noiseSyncQueue: Promise<void> = Promise.resolve();
 
   public async connectToVoiceRoom(
     roomId: string,
@@ -99,11 +112,21 @@ class LiveKitCallService {
     roomStore.setCallConnectionState("connecting");
     roomStore.setActiveCall(roomId, roomName, livekitUrl);
 
+    const { noiseReduction } = useDesktopSettingsStore.getState().settings;
+    const effectiveWebrtcNs =
+      noiseReduction.enabled && noiseReduction.webrtcNoiseSuppression;
+
     const room = new Room({
       adaptiveStream: true,
       dynacast: true,
+      audioCaptureDefaults: {
+        noiseSuppression: effectiveWebrtcNs,
+        echoCancellation: true,
+        autoGainControl: true,
+      },
     });
     this.room = room;
+    this.lastAppliedWebrtcNs = effectiveWebrtcNs;
 
     this.registerRoomListeners(room, roomId);
 
@@ -112,6 +135,7 @@ class LiveKitCallService {
     });
 
     await room.localParticipant.setMicrophoneEnabled(true);
+    await this.syncNoiseReductionToLocalTrack();
 
     roomStore.setLocalAudioFlags(false, false);
     roomStore.setCallConnectionState("connected");
@@ -128,6 +152,9 @@ class LiveKitCallService {
       await stopScreenStream();
       roomStore.setLocalStreamState({ status: "idle", warning: null });
     }
+
+    this.clearNoiseProcessorRefs();
+    this.lastAppliedWebrtcNs = null;
 
     if (this.room) {
       try {
@@ -202,7 +229,146 @@ class LiveKitCallService {
     this.applyDeafenAndVolumes();
   }
 
+  public async updateNoiseReduction(
+    config: NoiseReductionConfig,
+    persist = true
+  ): Promise<void> {
+    const store = useDesktopSettingsStore.getState();
+    store.setNoiseReduction(config);
+    const normalized = useDesktopSettingsStore.getState().settings.noiseReduction;
+
+    if (
+      normalized.enabled &&
+      this.noiseProcessor &&
+      this.noiseProcessorTrack &&
+      this.lastAppliedWebrtcNs === normalized.webrtcNoiseSuppression
+    ) {
+      this.noiseProcessor.updateConfig(normalized);
+    } else {
+      await this.syncNoiseReductionToLocalTrack();
+    }
+
+    if (persist) {
+      await saveAppSettings(useDesktopSettingsStore.getState().settings);
+    }
+  }
+
+  public async toggleNoiseReduction(): Promise<void> {
+    const current = useDesktopSettingsStore.getState().settings.noiseReduction;
+    await this.updateNoiseReduction({
+      ...current,
+      enabled: !current.enabled,
+    });
+  }
+
+  public isNoiseProcessorActive(): boolean {
+    return Boolean(this.noiseProcessor && this.noiseProcessorTrack);
+  }
+
+  public subscribeLocalMicLevel(
+    listener: (sample: MicLevelSample) => void
+  ): () => void {
+    this.micLevelListeners.add(listener);
+    return () => {
+      this.micLevelListeners.delete(listener);
+    };
+  }
+
+  public syncNoiseReductionToLocalTrack(): Promise<void> {
+    this.noiseSyncQueue = this.noiseSyncQueue
+      .then(() => this.performNoiseReductionSync())
+      .catch(() => {});
+    return this.noiseSyncQueue;
+  }
+
+  private async performNoiseReductionSync(): Promise<void> {
+    if (!this.room) {
+      this.clearNoiseProcessorRefs();
+      return;
+    }
+
+    const micPub = this.room.localParticipant.getTrackPublication(
+      Track.Source.Microphone
+    );
+    const localAudioTrack = micPub?.track;
+    if (!(localAudioTrack instanceof LocalAudioTrack)) {
+      this.clearNoiseProcessorRefs();
+      return;
+    }
+
+    const config = useDesktopSettingsStore.getState().settings.noiseReduction;
+    const effectiveWebrtcNs =
+      config.enabled && config.webrtcNoiseSuppression;
+
+    if (this.lastAppliedWebrtcNs !== effectiveWebrtcNs) {
+      try {
+        await localAudioTrack.applyConstraints({
+          noiseSuppression: effectiveWebrtcNs,
+          echoCancellation: true,
+          autoGainControl: true,
+        });
+      } catch {
+        // Ignore constraint errors on devices/webviews that reject dynamic changes
+      }
+      this.lastAppliedWebrtcNs = effectiveWebrtcNs;
+    }
+
+    if (config.enabled) {
+      if (
+        this.noiseProcessor &&
+        this.noiseProcessorTrack === localAudioTrack
+      ) {
+        this.noiseProcessor.updateConfig(config);
+        return;
+      }
+
+      if (!this.audioContext && window.AudioContext) {
+        this.audioContext = new window.AudioContext();
+      }
+      if (
+        this.audioContext &&
+        !(localAudioTrack as unknown as { audioContext?: AudioContext })
+          .audioContext
+      ) {
+        await localAudioTrack.setAudioContext(this.audioContext);
+      }
+
+      this.clearNoiseProcessorRefs();
+      const processor = new NoiseGateProcessor(config);
+      this.noiseProcessor = processor;
+      this.noiseProcessorTrack = localAudioTrack;
+      this.noiseProcessorUnsub = processor.subscribeLevel((sample) => {
+        for (const listener of this.micLevelListeners) {
+          listener(sample);
+        }
+      });
+
+      await localAudioTrack.setProcessor(processor);
+    } else {
+      if (this.noiseProcessor || this.noiseProcessorTrack) {
+        this.clearNoiseProcessorRefs();
+        try {
+          await localAudioTrack.stopProcessor();
+        } catch {
+          // Ignore if track was already stopped
+        }
+      }
+    }
+  }
+
+  private clearNoiseProcessorRefs(): void {
+    this.noiseProcessorUnsub?.();
+    this.noiseProcessorUnsub = null;
+    this.noiseProcessor = null;
+    this.noiseProcessorTrack = null;
+  }
+
   private registerRoomListeners(room: Room, _roomId: string): void {
+    room.on(RoomEvent.LocalTrackPublished, (publication) => {
+      if (publication.source === Track.Source.Microphone) {
+        void this.syncNoiseReductionToLocalTrack();
+      }
+    });
     room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
       const store = useRoomStore.getState();
       if (state === ConnectionState.Connected) {

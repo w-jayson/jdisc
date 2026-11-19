@@ -54,6 +54,37 @@ impl Default for GlobalShortcutConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NoiseReductionPreset {
+    Light,
+    Moderate,
+    Aggressive,
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NoiseReductionConfig {
+    pub enabled: bool,
+    pub preset: NoiseReductionPreset,
+    pub threshold_db: i16,
+    pub high_pass_hz: u16,
+    pub webrtc_noise_suppression: bool,
+}
+
+impl Default for NoiseReductionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            preset: NoiseReductionPreset::Moderate,
+            threshold_db: -45,
+            high_pass_hz: 95,
+            webrtc_noise_suppression: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -62,6 +93,8 @@ pub struct AppSettings {
     pub participant_volumes: HashMap<String, u16>,
     pub stream_audio_mix: AudioMixConfig,
     pub global_shortcut: GlobalShortcutConfig,
+    #[serde(default)]
+    pub noise_reduction: NoiseReductionConfig,
 }
 
 impl Default for AppSettings {
@@ -72,6 +105,7 @@ impl Default for AppSettings {
             participant_volumes: HashMap::new(),
             stream_audio_mix: AudioMixConfig::default(),
             global_shortcut: GlobalShortcutConfig::default(),
+            noise_reduction: NoiseReductionConfig::default(),
         }
     }
 }
@@ -94,6 +128,9 @@ impl AppSettings {
         if self.stream_audio_mix.volume > 100 {
             self.stream_audio_mix.volume = 100;
         }
+
+        self.noise_reduction.threshold_db = self.noise_reduction.threshold_db.clamp(-70, -15);
+        self.noise_reduction.high_pass_hz = self.noise_reduction.high_pass_hz.clamp(0, 300);
 
         self
     }
@@ -238,6 +275,13 @@ mod tests {
                 muted: false,
             },
             global_shortcut: GlobalShortcutConfig::default(),
+            noise_reduction: NoiseReductionConfig {
+                enabled: true,
+                preset: NoiseReductionPreset::Custom,
+                threshold_db: -120,
+                high_pass_hz: 900,
+                webrtc_noise_suppression: false,
+            },
         };
 
         let normalized = raw.normalized();
@@ -245,5 +289,21 @@ mod tests {
         assert_eq!(normalized.participant_volumes.get("u1"), Some(&200));
         assert_eq!(normalized.participant_volumes.get("u2"), Some(&145));
         assert_eq!(normalized.stream_audio_mix.volume, 100);
+        assert_eq!(normalized.noise_reduction.threshold_db, -70);
+        assert_eq!(normalized.noise_reduction.high_pass_hz, 300);
+    }
+
+    #[test]
+    fn deserializes_legacy_settings_without_noise_reduction() {
+        let legacy_json = r#"{
+            "serverUrl": "https://jdisc.example.com",
+            "authSession": null,
+            "participantVolumes": {},
+            "streamAudioMix": { "volume": 100, "muted": false },
+            "globalShortcut": { "enabled": false, "mode": "toggle", "accelerator": null }
+        }"#;
+
+        let parsed: AppSettings = serde_json::from_str(legacy_json).expect("legacy JSON should parse");
+        assert_eq!(parsed.noise_reduction, NoiseReductionConfig::default());
     }
 }

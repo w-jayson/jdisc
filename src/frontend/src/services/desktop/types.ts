@@ -2,6 +2,7 @@ export type CaptureSourceKind = "window" | "monitor";
 export type StreamPreset = "720p30" | "1080p60";
 export type StreamAudioMode = "process_tree" | "system_global" | "none";
 export type ShortcutMode = "toggle" | "push_to_talk";
+export type NoiseReductionPreset = "light" | "moderate" | "aggressive" | "custom";
 export type StreamLifecycleStatus =
   | "idle"
   | "starting"
@@ -27,12 +28,21 @@ export interface GlobalShortcutConfig {
   accelerator: string | null;
 }
 
+export interface NoiseReductionConfig {
+  enabled: boolean;
+  preset: NoiseReductionPreset;
+  thresholdDb: number;
+  highPassHz: number;
+  webrtcNoiseSuppression: boolean;
+}
+
 export interface AppSettings {
   serverUrl: string;
   authSession: AuthSession | null;
   participantVolumes: Record<string, number>;
   streamAudioMix: AudioMixConfig;
   globalShortcut: GlobalShortcutConfig;
+  noiseReduction: NoiseReductionConfig;
 }
 
 export interface CaptureSource {
