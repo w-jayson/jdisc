@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { AppUpdateBanner } from "./components/AppUpdateBanner";
 import { AuthScreen } from "./components/AuthScreen";
 import { GlobalShortcutSettings } from "./components/GlobalShortcutSettings";
 import { RoomSidebar } from "./components/RoomSidebar";
@@ -6,6 +7,7 @@ import { ScreenSharePickerModal } from "./components/ScreenSharePickerModal";
 import { StreamAudioMixerControl } from "./components/StreamAudioMixerControl";
 import { StreamStageViewer } from "./components/StreamStageViewer";
 import { VoiceControlsBar } from "./components/VoiceControlsBar";
+import { useAppUpdater } from "./hooks/useAppUpdater";
 import { useDesktopStreaming } from "./hooks/useDesktopStreaming";
 import { useGlobalShortcutSync } from "./hooks/useGlobalShortcutSync";
 import { usePresenceHub } from "./hooks/usePresenceHub";
@@ -34,6 +36,7 @@ export const App: React.FC = () => {
 
   usePresenceHub();
   useGlobalShortcutSync();
+  const updater = useAppUpdater();
 
   const {
     activeRoomName,
@@ -82,11 +85,20 @@ export const App: React.FC = () => {
   }
 
   if (!session) {
-    return <AuthScreen />;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", overflow: "hidden" }}>
+        <AppUpdateBanner updater={updater} />
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          <AuthScreen />
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div style={{ display: "flex", height: "100%", width: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", overflow: "hidden" }}>
+      <AppUpdateBanner updater={updater} />
+      <div style={{ display: "flex", flex: 1, minHeight: 0, width: "100%", overflow: "hidden" }}>
       <RoomSidebar
         onJoinRoom={(roomId) => void joinRoom(roomId)}
         onUpdateParticipantVolume={(userId, vol) =>
@@ -174,6 +186,7 @@ export const App: React.FC = () => {
         isOpen={isShortcutSettingsOpen}
         onClose={() => setIsShortcutSettingsOpen(false)}
       />
+      </div>
     </div>
   );
 };

@@ -13,10 +13,7 @@ pub struct GlobalShortcutTriggeredPayload {
     pub action: &'static str,
 }
 
-pub fn apply_global_shortcut(
-    app: &AppHandle,
-    config: &GlobalShortcutConfig,
-) -> Result<(), String> {
+pub fn apply_global_shortcut(app: &AppHandle, config: &GlobalShortcutConfig) -> Result<(), String> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
 

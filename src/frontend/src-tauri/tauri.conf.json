@@ -27,7 +27,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,8 +43,23 @@
       },
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["PortugueseBR", "English"],
+        "languages": [
+          "PortugueseBR",
+          "English"
+        ],
         "displayLanguageSelector": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "requireSignedVersion": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJBMzQ5NEY4Q0Q2Qzk1NDkKUldSSmxXek4rSlEwdWg0T2VTK1M2TDRzNmJWaDN3dmhHZ0JxaGZKM3RVWmlpSXNVNWpESUxHbUEK",
+      "endpoints": [
+        "https://github.com/w-jayson/jdisc/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

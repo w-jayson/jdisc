@@ -6,10 +6,7 @@ const STORE_FILE: &str = "settings.json";
 const SETTINGS_KEY: &str = "app_settings";
 
 #[tauri::command]
-pub fn get_app_settings(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<AppSettings, String> {
+pub fn get_app_settings(app: AppHandle, state: State<'_, AppState>) -> Result<AppSettings, String> {
     if let Ok(store) = app.store(STORE_FILE) {
         if let Some(val) = store.get(SETTINGS_KEY) {
             if let Ok(parsed) = serde_json::from_value::<AppSettings>(val) {

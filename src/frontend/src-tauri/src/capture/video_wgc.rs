@@ -322,7 +322,8 @@ mod win32_wgc {
                     if IsIconic(hwnd).as_bool() {
                         if let Some((ref bgra, stride, w, h)) = last_valid_bgra {
                             if let Ok(i420) = convert_bgra_to_i420_simd(bgra, stride, w, h) {
-                                let video_frame = VideoFrame::new(VideoRotation::VideoRotation0, i420);
+                                let video_frame =
+                                    VideoFrame::new(VideoRotation::VideoRotation0, i420);
                                 video_source.capture_frame(&video_frame);
                             }
                         }
@@ -339,7 +340,13 @@ mod win32_wgc {
                         if let Ok(access) = surface.cast::<IDirect3DDxgiInterfaceAccess>() {
                             if let Ok(tex) = unsafe { access.GetInterface::<ID3D11Texture2D>() } {
                                 if let Some((scaled_bgra, scaled_stride, out_w, out_h)) =
-                                    copy_texture_and_scale(&d3d_device, &d3d_context, &tex, max_w, max_h)
+                                    copy_texture_and_scale(
+                                        &d3d_device,
+                                        &d3d_context,
+                                        &tex,
+                                        max_w,
+                                        max_h,
+                                    )
                                 {
                                     if let Ok(i420) = convert_bgra_to_i420_simd(
                                         &scaled_bgra,

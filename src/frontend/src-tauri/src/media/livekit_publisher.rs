@@ -4,7 +4,9 @@ use crate::state::{StreamAudioMode, StreamPreset};
 use livekit::options::{TrackPublishOptions, VideoEncoding};
 use livekit::prelude::*;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
-use livekit::webrtc::prelude::{AudioSourceOptions, RtcAudioSource, RtcVideoSource, VideoResolution};
+use livekit::webrtc::prelude::{
+    AudioSourceOptions, RtcAudioSource, RtcVideoSource, VideoResolution,
+};
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use tokio_util::sync::CancellationToken;
 

@@ -1,0 +1,52 @@
+name: Deploy VPS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/backend/**"
+      - "infra/**"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to VPS via SSH
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check SSH secrets configuration
+        id: check
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          if [ -z "$VPS_HOST" ] || [ -z "$VPS_USER" ] || [ -z "$VPS_SSH_KEY" ]; then
+            echo "::notice::Secrets VPS_HOST, VPS_USER ou VPS_SSH_KEY não configurados no GitHub. Pulando deploy automático."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy via SSH
+        if: steps.check.outputs.ready == 'true'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          envs: VPS_APP_DIR
+          script: |
+            set -euo pipefail
+            APP_DIR="${VPS_APP_DIR:-$HOME/jdisc}"
+            cd "$APP_DIR"
+            git pull --ff-only origin main
+            docker compose -f infra/docker-compose.prod.yml --env-file .env up -d --build --remove-orphans
+            docker compose -f infra/docker-compose.prod.yml ps
+        env:
+          VPS_APP_DIR: ${{ vars.VPS_APP_DIR }}

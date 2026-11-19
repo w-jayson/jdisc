@@ -8,6 +8,7 @@
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "global-shortcut:allow-is-registered",
-    "store:default"
+    "store:default",
+    "process:default"
   ]
 }

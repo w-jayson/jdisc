@@ -2,9 +2,7 @@ use crate::capture::audio_wasapi::start_wasapi_audio_capture;
 use crate::capture::enumerate::list_all_capture_sources;
 use crate::capture::video_wgc::{run_wgc_capture_loop, VideoCaptureExitReason};
 use crate::media::livekit_publisher::connect_and_publish_native_stream;
-use crate::state::{
-    AppState, CaptureSource, StreamAudioMode, StreamLifecycleStatus, StreamPreset,
-};
+use crate::state::{AppState, CaptureSource, StreamAudioMode, StreamLifecycleStatus, StreamPreset};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -245,10 +243,7 @@ pub async fn start_screen_stream(
 }
 
 #[tauri::command]
-pub async fn stop_screen_stream(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn stop_screen_stream(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let token_opt = {
         let mut active = state
             .active_stream

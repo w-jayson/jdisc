@@ -55,7 +55,7 @@ mod win32_impl {
     use std::os::windows::ffi::OsStringExt;
     use std::path::Path;
     use windows::core::PWSTR;
-    use windows::Win32::Foundation::{BOOL, CloseHandle, HWND, LPARAM, RECT, TRUE};
+    use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, RECT, TRUE};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows::Win32::Graphics::Gdi::{
         DeleteObject, EnumDisplayMonitors, GetDC, GetDIBits, GetMonitorInfoW, GetObjectW,
@@ -340,7 +340,10 @@ mod win32_impl {
             writer.write_image_data(&pixels).ok()?;
         }
 
-        Some(format!("data:image/png;base64,{}", BASE64.encode(png_bytes)))
+        Some(format!(
+            "data:image/png;base64,{}",
+            BASE64.encode(png_bytes)
+        ))
     }
 
     pub fn enumerate_monitors() -> Result<Vec<CaptureSource>, String> {
