@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { listCaptureSources } from "../services/desktop/captureService";
 import type {
   CaptureSource,
+  StreamAspectMode,
   StreamAudioMode,
   StreamPreset,
 } from "../services/desktop/types";
@@ -12,7 +13,8 @@ interface ScreenSharePickerModalProps {
   onStartStream: (
     sourceId: string,
     preset: StreamPreset,
-    audioMode: StreamAudioMode
+    audioMode: StreamAudioMode,
+    aspectMode: StreamAspectMode
   ) => Promise<boolean>;
 }
 
@@ -27,6 +29,7 @@ export const ScreenSharePickerModal: React.FC<ScreenSharePickerModalProps> = ({
   );
   const [selectedSourceId, setSelectedSourceId] = useState<string>("");
   const [preset, setPreset] = useState<StreamPreset>("1080p60");
+  const [aspectMode, setAspectMode] = useState<StreamAspectMode>("original");
   const [includeAudio, setIncludeAudio] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -71,7 +74,8 @@ export const ScreenSharePickerModal: React.FC<ScreenSharePickerModalProps> = ({
       const ok = await onStartStream(
         selectedSourceId,
         preset,
-        effectiveAudioMode
+        effectiveAudioMode,
+        aspectMode
       );
       if (ok) {
         onClose();
@@ -285,6 +289,39 @@ export const ScreenSharePickerModal: React.FC<ScreenSharePickerModalProps> = ({
             >
               <option value="720p30">720p @ 30 FPS (Fluido / Econômico)</option>
               <option value="1080p60">1080p @ 60 FPS (Alta Definição)</option>
+            </select>
+          </label>
+
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              fontSize: "13px",
+              color: "#f2f3f5",
+            }}
+          >
+            Proporção:
+            <select
+              value={aspectMode}
+              onChange={(e) =>
+                setAspectMode(e.target.value as StreamAspectMode)
+              }
+              style={{
+                padding: "6px 10px",
+                borderRadius: "4px",
+                background: "#2b2d31",
+                color: "#f2f3f5",
+                border: "1px solid #3f4147",
+              }}
+            >
+              <option value="original">Original (Padrão)</option>
+              <option value="stretch_16_9">
+                Esticar para 16:9 (CS2 / 4:3 Esticado)
+              </option>
+              <option value="crop_4_3_stretch_16_9">
+                Recortar 4:3 → 16:9 (Remove sobra lateral)
+              </option>
             </select>
           </label>
 

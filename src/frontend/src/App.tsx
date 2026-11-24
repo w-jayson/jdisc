@@ -64,6 +64,7 @@ export const App: React.FC = () => {
     localStreamStatus,
     localStreamPreset,
     localStreamAudioMode,
+    localStreamAspectMode,
     localStreamWarning,
     streamAudioMix,
     streamError,
@@ -71,6 +72,7 @@ export const App: React.FC = () => {
     startStream,
     stopStream,
     updateStreamAudioMix,
+    updateStreamAspectMode,
   } = useDesktopStreaming();
 
   if (!hydrated) {
@@ -166,9 +168,11 @@ export const App: React.FC = () => {
           status={localStreamStatus}
           preset={localStreamPreset}
           audioMode={localStreamAudioMode}
+          aspectMode={localStreamAspectMode}
           audioMix={streamAudioMix}
           warning={localStreamWarning}
           onUpdateMix={(next) => void updateStreamAudioMix(next)}
+          onUpdateAspectMode={(next) => void updateStreamAspectMode(next)}
         />
 
         <VoiceControlsBar

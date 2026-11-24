@@ -1,8 +1,8 @@
-use crate::state::StreamPreset;
+use crate::state::{StreamAspectMode, StreamPreset};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use livekit::webrtc::prelude::{I420Buffer, VideoFrame, VideoRotation};
 use livekit::webrtc::video_source::native::NativeVideoSource;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
@@ -63,7 +63,12 @@ pub fn convert_bgra_to_i420_simd(
     Ok(i420)
 }
 
-/// Nearest-neighbor proportional downscale for BGRA frames exceeding the target preset resolution.
+/// Scales (and optionally crops/stretches) a BGRA frame according to the active `StreamAspectMode`.
+///
+/// - `Original`: preserves aspect ratio proportionally when downscaling to fit `(max_w, max_h)`.
+/// - `Stretch16x9`: stretches the active `(src_w, src_h)` region to fill `(max_w, max_h)` (16:9).
+/// - `Crop4x3Stretch16x9`: if wider than 4:3 (e.g., 16:9 frame with desktop bleed on the right),
+///   crops the left 4:3 region (`src_h * 4 / 3`) and stretches it to `(max_w, max_h)` (16:9).
 pub fn scale_bgra_frame_if_needed(
     src: &[u8],
     src_stride: u32,
@@ -71,26 +76,58 @@ pub fn scale_bgra_frame_if_needed(
     src_h: u32,
     max_w: u32,
     max_h: u32,
+    aspect_mode: StreamAspectMode,
 ) -> (Vec<u8>, u32, u32, u32) {
-    let target_w = (src_w.min(max_w) & !1).max(2);
-    let target_h = (src_h.min(max_h) & !1).max(2);
+    let crop_w = match aspect_mode {
+        StreamAspectMode::Crop4x3Stretch16x9 if (src_w as u64) * 3 > (src_h as u64) * 4 => {
+            (((src_h as u64) * 4) / 3).max(2).min(src_w as u64) as u32
+        }
+        _ => src_w.max(2),
+    };
+    let crop_h = src_h.max(2);
 
-    if target_w == src_w && target_h == src_h && src_stride == src_w * 4 {
-        return (src.to_vec(), src_stride, target_w, target_h);
-    }
+    let (target_w, target_h) = match aspect_mode {
+        StreamAspectMode::Original => {
+            let scale = (max_w as f64 / crop_w as f64)
+                .min(max_h as f64 / crop_h as f64)
+                .min(1.0);
+            let w = ((crop_w as f64 * scale).round() as u32).clamp(2, max_w) & !1;
+            let h = ((crop_h as f64 * scale).round() as u32).clamp(2, max_h) & !1;
+            (w.max(2), h.max(2))
+        }
+        StreamAspectMode::Stretch16x9 | StreamAspectMode::Crop4x3Stretch16x9 => {
+            ((max_w & !1).max(2), (max_h & !1).max(2))
+        }
+    };
 
     let dst_stride = target_w * 4;
-    let mut dst = vec![0u8; (dst_stride * target_h) as usize];
+    let required_fast_bytes = (dst_stride as usize) * (target_h as usize);
+    if target_w == crop_w
+        && target_h == crop_h
+        && src_stride == dst_stride
+        && src.len() >= required_fast_bytes
+    {
+        return (
+            src[..required_fast_bytes].to_vec(),
+            dst_stride,
+            target_w,
+            target_h,
+        );
+    }
+
+    let mut dst = vec![0u8; required_fast_bytes];
+    let x_offsets: Vec<usize> = (0..target_w)
+        .map(|x| ((((x as u64) * (crop_w as u64)) / (target_w as u64)) as usize) * 4)
+        .collect();
 
     for y in 0..target_h {
-        let src_y = ((y as u64 * src_h as u64) / target_h as u64) as u32;
-        let src_row_offset = (src_y * src_stride) as usize;
-        let dst_row_offset = (y * dst_stride) as usize;
+        let src_y = (((y as u64) * (crop_h as u64)) / (target_h as u64)) as u32;
+        let src_row_offset = (src_y as usize) * (src_stride as usize);
+        let dst_row_offset = (y as usize) * (dst_stride as usize);
 
-        for x in 0..target_w {
-            let src_x = ((x as u64 * src_w as u64) / target_w as u64) as u32;
-            let s_idx = src_row_offset + (src_x * 4) as usize;
-            let d_idx = dst_row_offset + (x * 4) as usize;
+        for (x, &sx_off) in x_offsets.iter().enumerate() {
+            let s_idx = src_row_offset + sx_off;
+            let d_idx = dst_row_offset + x * 4;
             if s_idx + 4 <= src.len() && d_idx + 4 <= dst.len() {
                 dst[d_idx..d_idx + 4].copy_from_slice(&src[s_idx..s_idx + 4]);
             }
@@ -169,6 +206,7 @@ pub fn run_wgc_capture_loop<F, P>(
     video_source: NativeVideoSource,
     cancel_token: CancellationToken,
     preview_enabled: Arc<AtomicBool>,
+    aspect_mode: Arc<AtomicU8>,
     on_preview_frame: P,
     on_exit: F,
 ) -> Result<(), String>
@@ -184,6 +222,7 @@ where
             video_source,
             cancel_token,
             preview_enabled,
+            aspect_mode,
             on_preview_frame,
             on_exit,
         )
@@ -197,6 +236,7 @@ where
             video_source,
             cancel_token,
             preview_enabled,
+            aspect_mode,
             on_preview_frame,
         );
         on_exit(VideoCaptureExitReason::Cancelled);
@@ -208,11 +248,11 @@ where
 mod win32_wgc {
     use super::*;
     use std::sync::mpsc;
-    use windows::core::Interface;
+    use windows::core::{Interface, PCWSTR};
     use windows::Foundation::TypedEventHandler;
     use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem};
     use windows::Graphics::DirectX::DirectXPixelFormat;
-    use windows::Win32::Foundation::{HMODULE, HWND};
+    use windows::Win32::Foundation::{HMODULE, HWND, RECT};
     use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
     use windows::Win32::Graphics::Direct3D11::{
         D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D,
@@ -220,12 +260,15 @@ mod win32_wgc {
         D3D11_MAP_READ, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
     };
     use windows::Win32::Graphics::Dxgi::IDXGIDevice;
-    use windows::Win32::Graphics::Gdi::HMONITOR;
+    use windows::Win32::Graphics::Gdi::{
+        EnumDisplaySettingsW, GetMonitorInfoW, MonitorFromWindow, DEVMODEW, ENUM_CURRENT_SETTINGS,
+        HMONITOR, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
+    };
     use windows::Win32::System::WinRT::Direct3D11::{
         CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
     };
     use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
-    use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow};
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsIconic, IsWindow};
 
     pub fn spawn_wgc_thread<F, P>(
         source_id: String,
@@ -233,6 +276,7 @@ mod win32_wgc {
         video_source: NativeVideoSource,
         cancel_token: CancellationToken,
         preview_enabled: Arc<AtomicBool>,
+        aspect_mode: Arc<AtomicU8>,
         on_preview_frame: P,
         on_exit: F,
     ) -> Result<(), String>
@@ -252,6 +296,7 @@ mod win32_wgc {
                     video_source,
                     cancel_token,
                     preview_enabled,
+                    aspect_mode,
                     on_preview_frame,
                 );
                 on_exit(reason);
@@ -303,12 +348,67 @@ mod win32_wgc {
         }
     }
 
+    /// Queries the active physical display mode (`dmPelsWidth x dmPelsHeight`) of the target's monitor.
+    ///
+    /// For monitors, this always reflects the current display resolution.
+    /// For windows, this is returned only when the window is anchored to the monitor's top-left corner
+    /// (e.g. fullscreen/borderless games like CS2 4:3), preventing stale desktop bleed outside the
+    /// active fullscreen resolution without clipping normal windows dragged across monitors.
+    fn query_active_monitor_clamp(target: &CaptureTarget) -> Option<(u32, u32)> {
+        unsafe {
+            let (hmon, win_rect_opt) = match *target {
+                CaptureTarget::Window(raw_hwnd) => {
+                    let hwnd = HWND(raw_hwnd as *mut _);
+                    let mut rc = RECT::default();
+                    if GetWindowRect(hwnd, &mut rc).is_err() {
+                        return None;
+                    }
+                    let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                    (hmon, Some(rc))
+                }
+                CaptureTarget::Monitor(raw_hmon) => (HMONITOR(raw_hmon as *mut _), None),
+            };
+
+            if hmon.is_invalid() {
+                return None;
+            }
+
+            let mut info = MONITORINFOEXW::default();
+            info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+            if !GetMonitorInfoW(hmon, &mut info.monitorInfo).as_bool() {
+                return None;
+            }
+
+            if let Some(win_rc) = win_rect_opt {
+                let mon_rc = info.monitorInfo.rcMonitor;
+                let anchored_top_left =
+                    (win_rc.left - mon_rc.left).abs() <= 2 && (win_rc.top - mon_rc.top).abs() <= 2;
+                if !anchored_top_left {
+                    return None;
+                }
+            }
+
+            let mut devmode = DEVMODEW::default();
+            devmode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
+            let device_name = PCWSTR::from_raw(info.szDevice.as_ptr());
+            if EnumDisplaySettingsW(device_name, ENUM_CURRENT_SETTINGS, &mut devmode).as_bool()
+                && devmode.dmPelsWidth >= 2
+                && devmode.dmPelsHeight >= 2
+            {
+                Some((devmode.dmPelsWidth, devmode.dmPelsHeight))
+            } else {
+                None
+            }
+        }
+    }
+
     fn execute_wgc_session<P>(
         target: CaptureTarget,
         preset: StreamPreset,
         video_source: NativeVideoSource,
         cancel_token: CancellationToken,
         preview_enabled: Arc<AtomicBool>,
+        aspect_mode: Arc<AtomicU8>,
         on_preview_frame: P,
     ) -> VideoCaptureExitReason
     where
@@ -316,6 +416,7 @@ mod win32_wgc {
     {
         let (max_w, max_h, fps) = preset_dimensions_and_fps(preset);
         let frame_interval = Duration::from_micros(1_000_000 / fps as u64);
+        let monitor_check_interval = Duration::from_millis(250);
 
         let (preview_tx, preview_rx) = mpsc::sync_channel::<(Vec<u8>, u32, u32)>(1);
         let _preview_thread = std::thread::Builder::new()
@@ -386,7 +487,7 @@ mod win32_wgc {
             Ok(())
         }));
 
-        let size = match item.Size() {
+        let mut pool_size = match item.Size() {
             Ok(s) if s.Width > 0 && s.Height > 0 => s,
             _ => return VideoCaptureExitReason::DrmOrUnavailable,
         };
@@ -395,7 +496,7 @@ mod win32_wgc {
             &winrt_device,
             DirectXPixelFormat::B8G8R8A8UIntNormalized,
             2,
-            size,
+            pool_size,
         ) {
             Ok(p) => p,
             Err(_) => return VideoCaptureExitReason::DrmOrUnavailable,
@@ -415,7 +516,10 @@ mod win32_wgc {
 
         let mut last_frame_sent = Instant::now() - frame_interval;
         let mut last_preview_sent = Instant::now() - PREVIEW_INTERVAL;
+        let mut last_monitor_check = Instant::now() - monitor_check_interval;
+        let mut cached_monitor_clamp = query_active_monitor_clamp(&target);
         let mut preview_was_enabled = preview_enabled.load(Ordering::Relaxed);
+        let mut last_aspect_mode = StreamAspectMode::from_u8(aspect_mode.load(Ordering::Relaxed));
         let mut last_valid_bgra: Option<(Vec<u8>, u32, u32, u32)> = None;
 
         while !cancel_token.is_cancelled() {
@@ -468,17 +572,40 @@ mod win32_wgc {
 
             if let Ok(frame) = frame_pool.TryGetNextFrame() {
                 let now = Instant::now();
-                if now.duration_since(last_frame_sent) >= frame_interval {
+                let content_size = frame.ContentSize().unwrap_or(pool_size);
+                let needs_recreate = content_size.Width > 0
+                    && content_size.Height > 0
+                    && (content_size.Width != pool_size.Width
+                        || content_size.Height != pool_size.Height);
+                let current_aspect_mode =
+                    StreamAspectMode::from_u8(aspect_mode.load(Ordering::Relaxed));
+                let aspect_changed = current_aspect_mode != last_aspect_mode;
+
+                if needs_recreate
+                    || aspect_changed
+                    || now.duration_since(last_monitor_check) >= monitor_check_interval
+                {
+                    cached_monitor_clamp = query_active_monitor_clamp(&target);
+                    last_monitor_check = now;
+                }
+
+                if aspect_changed || now.duration_since(last_frame_sent) >= frame_interval {
                     if let Ok(surface) = frame.Surface() {
                         if let Ok(access) = surface.cast::<IDirect3DDxgiInterfaceAccess>() {
                             if let Ok(tex) = unsafe { access.GetInterface::<ID3D11Texture2D>() } {
+                                let content_w = content_size.Width.max(0) as u32;
+                                let content_h = content_size.Height.max(0) as u32;
                                 if let Some((scaled_bgra, scaled_stride, out_w, out_h)) =
                                     copy_texture_and_scale(
                                         &d3d_device,
                                         &d3d_context,
                                         &tex,
+                                        content_w,
+                                        content_h,
+                                        cached_monitor_clamp,
                                         max_w,
                                         max_h,
+                                        current_aspect_mode,
                                     )
                                 {
                                     if let Ok(i420) = convert_bgra_to_i420_simd(
@@ -492,8 +619,9 @@ mod win32_wgc {
                                         video_source.capture_frame(&video_frame);
 
                                         if is_preview_enabled
-                                            && now.duration_since(last_preview_sent)
-                                                >= PREVIEW_INTERVAL
+                                            && (aspect_changed
+                                                || now.duration_since(last_preview_sent)
+                                                    >= PREVIEW_INTERVAL)
                                         {
                                             if let Some((rgb, pw, ph)) =
                                                 downscale_bgra_to_rgb_proportional(
@@ -513,6 +641,7 @@ mod win32_wgc {
                                         last_valid_bgra =
                                             Some((scaled_bgra, scaled_stride, out_w, out_h));
                                         last_frame_sent = now;
+                                        last_aspect_mode = current_aspect_mode;
                                     }
                                 }
                             }
@@ -520,6 +649,19 @@ mod win32_wgc {
                     }
                 }
                 let _ = frame.Close();
+
+                if needs_recreate
+                    && frame_pool
+                        .Recreate(
+                            &winrt_device,
+                            DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                            2,
+                            content_size,
+                        )
+                        .is_ok()
+                {
+                    pool_size = content_size;
+                }
             } else {
                 std::thread::sleep(Duration::from_millis(4));
             }
@@ -534,13 +676,35 @@ mod win32_wgc {
         device: &ID3D11Device,
         context: &ID3D11DeviceContext,
         texture: &ID3D11Texture2D,
+        content_w: u32,
+        content_h: u32,
+        monitor_clamp: Option<(u32, u32)>,
         max_w: u32,
         max_h: u32,
+        aspect_mode: StreamAspectMode,
     ) -> Option<(Vec<u8>, u32, u32, u32)> {
         unsafe {
             let mut desc = D3D11_TEXTURE2D_DESC::default();
             texture.GetDesc(&mut desc);
             if desc.Width < 2 || desc.Height < 2 {
+                return None;
+            }
+
+            let mut effective_w = if content_w >= 2 {
+                content_w.min(desc.Width)
+            } else {
+                desc.Width
+            };
+            let mut effective_h = if content_h >= 2 {
+                content_h.min(desc.Height)
+            } else {
+                desc.Height
+            };
+            if let Some((mon_w, mon_h)) = monitor_clamp {
+                effective_w = effective_w.min(mon_w);
+                effective_h = effective_h.min(mon_h);
+            }
+            if effective_w < 2 || effective_h < 2 {
                 return None;
             }
 
@@ -569,16 +733,17 @@ mod win32_wgc {
                 return None;
             }
 
-            let total_bytes = (mapped.RowPitch * desc.Height) as usize;
+            let total_bytes = (mapped.RowPitch * effective_h) as usize;
             let raw_slice = std::slice::from_raw_parts(mapped.pData as *const u8, total_bytes);
 
             let scaled = scale_bgra_frame_if_needed(
                 raw_slice,
                 mapped.RowPitch,
-                desc.Width,
-                desc.Height,
+                effective_w,
+                effective_h,
                 max_w,
                 max_h,
+                aspect_mode,
             );
 
             context.Unmap(&staging_tex, 0);
@@ -627,5 +792,86 @@ mod tests {
         let rgb = vec![120u8; (4 * 4 * 3) as usize];
         let url = encode_rgb_preview_data_url(&rgb, 4, 4).expect("PNG encode should succeed");
         assert!(url.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn original_mode_preserves_4_3_aspect_ratio_on_720p_downscale() {
+        let w = 144u32;
+        let h = 108u32;
+        let stride = w * 4;
+        let bgra = vec![200u8; (stride * h) as usize];
+
+        let (_out, out_stride, out_w, out_h) = scale_bgra_frame_if_needed(
+            &bgra,
+            stride,
+            w,
+            h,
+            128,
+            72,
+            StreamAspectMode::Original,
+        );
+
+        assert_eq!(out_w, 96);
+        assert_eq!(out_h, 72);
+        assert_eq!(out_stride, 96 * 4);
+    }
+
+    #[test]
+    fn stretch_16_9_stretches_4_3_frame_to_full_preset() {
+        let w = 144u32;
+        let h = 108u32;
+        let stride = w * 4;
+        let bgra = vec![50u8; (stride * h) as usize];
+
+        let (out, out_stride, out_w, out_h) = scale_bgra_frame_if_needed(
+            &bgra,
+            stride,
+            w,
+            h,
+            192,
+            108,
+            StreamAspectMode::Stretch16x9,
+        );
+
+        assert_eq!(out_w, 192);
+        assert_eq!(out_h, 108);
+        assert_eq!(out_stride, 192 * 4);
+        assert_eq!(out.len(), (out_stride * out_h) as usize);
+    }
+
+    #[test]
+    fn crop_4_3_stretch_16_9_discards_right_desktop_strip_and_stretches() {
+        // Simulate 192x108 texture where left 144px is CS2 (B=10) and right 48px is desktop (B=250)
+        let tex_w = 192u32;
+        let tex_h = 108u32;
+        let stride = tex_w * 4;
+        let mut bgra = vec![0u8; (stride * tex_h) as usize];
+        for y in 0..tex_h {
+            for x in 0..tex_w {
+                let idx = ((y * stride) + x * 4) as usize;
+                let val = if x < 144 { 10 } else { 250 };
+                bgra[idx] = val;
+                bgra[idx + 1] = val;
+                bgra[idx + 2] = val;
+                bgra[idx + 3] = 255;
+            }
+        }
+
+        let (out, _out_stride, out_w, out_h) = scale_bgra_frame_if_needed(
+            &bgra,
+            stride,
+            tex_w,
+            tex_h,
+            192,
+            108,
+            StreamAspectMode::Crop4x3Stretch16x9,
+        );
+
+        assert_eq!(out_w, 192);
+        assert_eq!(out_h, 108);
+        // Every pixel in the output must come from the left 4:3 game region (value 10), never desktop (250)
+        for px in out.chunks_exact(4) {
+            assert_eq!(px[0], 10);
+        }
     }
 }

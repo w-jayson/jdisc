@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { RoomSummaryDto } from "../services/api/roomsApi";
 import type {
+  StreamAspectMode,
   StreamAudioMode,
   StreamLifecycleStatus,
   StreamPreset,
@@ -36,6 +37,7 @@ interface RoomState {
   localStreamStatus: StreamLifecycleStatus;
   localStreamPreset: StreamPreset;
   localStreamAudioMode: StreamAudioMode;
+  localStreamAspectMode: StreamAspectMode;
   localStreamWarning: string | null;
   localStreamSourceTitle: string | null;
   localStreamPreviewUrl: string | null;
@@ -63,9 +65,11 @@ interface RoomState {
     status?: StreamLifecycleStatus;
     preset?: StreamPreset;
     audioMode?: StreamAudioMode;
+    aspectMode?: StreamAspectMode;
     warning?: string | null;
     sourceTitle?: string | null;
   }) => void;
+  setLocalStreamAspectMode: (mode: StreamAspectMode) => void;
   setLocalStreamPreviewUrl: (url: string | null) => void;
   setLocalStreamPreviewEnabled: (enabled: boolean) => void;
 }
@@ -84,6 +88,7 @@ export const useRoomStore = create<RoomState>((set) => ({
   localStreamStatus: "idle",
   localStreamPreset: "720p30",
   localStreamAudioMode: "process_tree",
+  localStreamAspectMode: "original",
   localStreamWarning: null,
   localStreamSourceTitle: null,
   localStreamPreviewUrl: null,
@@ -143,6 +148,7 @@ export const useRoomStore = create<RoomState>((set) => ({
         localStreamStatus: nextStatus,
         localStreamPreset: partial.preset ?? state.localStreamPreset,
         localStreamAudioMode: partial.audioMode ?? state.localStreamAudioMode,
+        localStreamAspectMode: partial.aspectMode ?? state.localStreamAspectMode,
         localStreamWarning:
           partial.warning !== undefined
             ? partial.warning
@@ -160,6 +166,8 @@ export const useRoomStore = create<RoomState>((set) => ({
         selectedStreamKey: nextSelected,
       };
     }),
+  setLocalStreamAspectMode: (localStreamAspectMode) =>
+    set({ localStreamAspectMode }),
   setLocalStreamPreviewUrl: (localStreamPreviewUrl) =>
     set({ localStreamPreviewUrl }),
   setLocalStreamPreviewEnabled: (localStreamPreviewEnabled) =>

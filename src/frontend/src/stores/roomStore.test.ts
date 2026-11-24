@@ -9,6 +9,7 @@ describe("roomStore local screenshare preview state", () => {
       localStreamStatus: "idle",
       localStreamPreset: "720p30",
       localStreamAudioMode: "process_tree",
+      localStreamAspectMode: "original",
       localStreamWarning: null,
       localStreamSourceTitle: null,
       localStreamPreviewUrl: null,
@@ -78,5 +79,20 @@ describe("roomStore local screenshare preview state", () => {
     // Stopping local stream falls back to the remaining remote stream
     store.setLocalStreamState({ status: "idle" });
     expect(useRoomStore.getState().selectedStreamKey).toBe("u2:screenshare");
+  });
+
+  it("updates localStreamAspectMode via stream state and live setter", () => {
+    const store = useRoomStore.getState();
+
+    store.setLocalStreamState({
+      status: "starting",
+      aspectMode: "stretch_16_9",
+    });
+    expect(useRoomStore.getState().localStreamAspectMode).toBe("stretch_16_9");
+
+    store.setLocalStreamAspectMode("crop_4_3_stretch_16_9");
+    expect(useRoomStore.getState().localStreamAspectMode).toBe(
+      "crop_4_3_stretch_16_9"
+    );
   });
 });

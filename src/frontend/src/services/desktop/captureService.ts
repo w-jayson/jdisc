@@ -5,6 +5,7 @@ import type {
   AudioWarningEvent,
   CaptureSource,
   StartStreamRequest,
+  StreamAspectMode,
   StreamPreviewFrameEvent,
   StreamSessionInfo,
   StreamStateChangedEvent,
@@ -46,6 +47,15 @@ export async function setStreamPreviewEnabled(enabled: boolean): Promise<void> {
     return;
   }
   await invoke<void>("set_stream_preview_enabled", { enabled });
+}
+
+export async function setStreamAspectMode(
+  mode: StreamAspectMode
+): Promise<void> {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  await invoke<void>("set_stream_aspect_mode", { mode });
 }
 
 export async function onStreamPreviewFrame(

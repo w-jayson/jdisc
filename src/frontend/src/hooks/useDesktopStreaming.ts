@@ -4,12 +4,14 @@ import {
   onAudioWarning,
   onStreamPreviewFrame,
   onStreamStateChanged,
+  setStreamAspectMode as invokeSetStreamAspectMode,
   setStreamAudioMix as invokeSetStreamAudioMix,
   startScreenStream,
   stopScreenStream,
 } from "../services/desktop/captureService";
 import type {
   AudioMixConfig,
+  StreamAspectMode,
   StreamAudioMode,
   StreamPreset,
 } from "../services/desktop/types";
@@ -21,8 +23,12 @@ export function useDesktopStreaming() {
   const localStreamStatus = useRoomStore((s) => s.localStreamStatus);
   const localStreamPreset = useRoomStore((s) => s.localStreamPreset);
   const localStreamAudioMode = useRoomStore((s) => s.localStreamAudioMode);
+  const localStreamAspectMode = useRoomStore((s) => s.localStreamAspectMode);
   const localStreamWarning = useRoomStore((s) => s.localStreamWarning);
   const setLocalStreamState = useRoomStore((s) => s.setLocalStreamState);
+  const setLocalStreamAspectMode = useRoomStore(
+    (s) => s.setLocalStreamAspectMode
+  );
   const setLocalStreamPreviewUrl = useRoomStore(
     (s) => s.setLocalStreamPreviewUrl
   );
@@ -79,7 +85,8 @@ export function useDesktopStreaming() {
     async (
       sourceId: string,
       preset: StreamPreset,
-      audioMode: StreamAudioMode
+      audioMode: StreamAudioMode,
+      aspectMode: StreamAspectMode = "original"
     ) => {
       if (!activeRoomId) {
         setStreamError("Conecte-se a uma sala de voz antes de compartilhar a tela.");
@@ -87,7 +94,13 @@ export function useDesktopStreaming() {
       }
 
       setStreamError(null);
-      setLocalStreamState({ status: "starting", preset, audioMode, warning: null });
+      setLocalStreamState({
+        status: "starting",
+        preset,
+        audioMode,
+        aspectMode,
+        warning: null,
+      });
 
       try {
         const tokenResp = await issueRoomScreenshareToken(
@@ -103,12 +116,14 @@ export function useDesktopStreaming() {
           sourceId,
           preset,
           audioMode,
+          aspectMode,
         });
 
         setLocalStreamState({
           status: sessionInfo.status,
           preset: sessionInfo.preset,
           audioMode: sessionInfo.activeAudioMode,
+          aspectMode: sessionInfo.aspectMode ?? aspectMode,
           warning: sessionInfo.audioWarning,
           sourceTitle: sessionInfo.sourceTitle ?? null,
         });
@@ -143,10 +158,19 @@ export function useDesktopStreaming() {
     [setStreamAudioMixStore]
   );
 
+  const updateStreamAspectMode = useCallback(
+    async (nextMode: StreamAspectMode) => {
+      setLocalStreamAspectMode(nextMode);
+      await invokeSetStreamAspectMode(nextMode);
+    },
+    [setLocalStreamAspectMode]
+  );
+
   return {
     localStreamStatus,
     localStreamPreset,
     localStreamAudioMode,
+    localStreamAspectMode,
     localStreamWarning,
     streamAudioMix,
     streamError,
@@ -154,5 +178,6 @@ export function useDesktopStreaming() {
     startStream,
     stopStream,
     updateStreamAudioMix,
+    updateStreamAspectMode,
   };
 }

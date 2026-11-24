@@ -1,6 +1,10 @@
 export type CaptureSourceKind = "window" | "monitor";
 export type StreamPreset = "720p30" | "1080p60";
 export type StreamAudioMode = "process_tree" | "system_global" | "none";
+export type StreamAspectMode =
+  | "original"
+  | "stretch_16_9"
+  | "crop_4_3_stretch_16_9";
 export type ShortcutMode = "toggle" | "push_to_talk";
 export type NoiseReductionPreset = "light" | "moderate" | "aggressive" | "custom";
 export type StreamLifecycleStatus =
@@ -70,6 +74,7 @@ export interface StartStreamRequest {
   sourceId: string;
   preset: StreamPreset;
   audioMode: StreamAudioMode;
+  aspectMode?: StreamAspectMode;
 }
 
 export interface StreamSessionInfo {
@@ -78,6 +83,7 @@ export interface StreamSessionInfo {
   sourceTitle?: string;
   preset: StreamPreset;
   activeAudioMode: StreamAudioMode;
+  aspectMode?: StreamAspectMode;
   audioWarning: string | null;
 }
 

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -200,6 +200,35 @@ pub enum StreamAudioMode {
     None,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum StreamAspectMode {
+    #[default]
+    #[serde(rename = "original")]
+    Original,
+    #[serde(rename = "stretch_16_9")]
+    Stretch16x9,
+    #[serde(rename = "crop_4_3_stretch_16_9")]
+    Crop4x3Stretch16x9,
+}
+
+impl StreamAspectMode {
+    pub fn as_u8(self) -> u8 {
+        match self {
+            StreamAspectMode::Original => 0,
+            StreamAspectMode::Stretch16x9 => 1,
+            StreamAspectMode::Crop4x3Stretch16x9 => 2,
+        }
+    }
+
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => StreamAspectMode::Stretch16x9,
+            2 => StreamAspectMode::Crop4x3Stretch16x9,
+            _ => StreamAspectMode::Original,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamLifecycleStatus {
@@ -251,6 +280,7 @@ pub struct ActiveStreamState {
     pub source_title: Option<String>,
     pub preset: Option<StreamPreset>,
     pub audio_mode: Option<StreamAudioMode>,
+    pub aspect_mode: Option<StreamAspectMode>,
     pub status: StreamLifecycleStatus,
     pub cancel_token: Option<CancellationToken>,
 }
@@ -263,6 +293,7 @@ impl Default for ActiveStreamState {
             source_title: None,
             preset: None,
             audio_mode: None,
+            aspect_mode: None,
             status: StreamLifecycleStatus::Idle,
             cancel_token: None,
         }
@@ -274,6 +305,7 @@ pub struct AppState {
     pub active_stream: Mutex<ActiveStreamState>,
     pub audio_mix: Arc<AudioMixState>,
     pub preview_enabled: Arc<AtomicBool>,
+    pub aspect_mode: Arc<AtomicU8>,
 }
 
 impl Default for AppState {
@@ -283,6 +315,7 @@ impl Default for AppState {
             active_stream: Mutex::new(ActiveStreamState::default()),
             audio_mix: Arc::new(AudioMixState::default()),
             preview_enabled: Arc::new(AtomicBool::new(true)),
+            aspect_mode: Arc::new(AtomicU8::new(StreamAspectMode::Original.as_u8())),
         }
     }
 }

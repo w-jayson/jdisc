@@ -1,6 +1,7 @@
 import React from "react";
 import type {
   AudioMixConfig,
+  StreamAspectMode,
   StreamAudioMode,
   StreamLifecycleStatus,
   StreamPreset,
@@ -10,14 +11,25 @@ interface StreamAudioMixerControlProps {
   status: StreamLifecycleStatus;
   preset: StreamPreset;
   audioMode: StreamAudioMode;
+  aspectMode: StreamAspectMode;
   audioMix: AudioMixConfig;
   warning: string | null;
   onUpdateMix: (next: AudioMixConfig) => void;
+  onUpdateAspectMode: (next: StreamAspectMode) => void;
 }
 
 export const StreamAudioMixerControl: React.FC<
   StreamAudioMixerControlProps
-> = ({ status, preset, audioMode, audioMix, warning, onUpdateMix }) => {
+> = ({
+  status,
+  preset,
+  audioMode,
+  aspectMode,
+  audioMix,
+  warning,
+  onUpdateMix,
+  onUpdateAspectMode,
+}) => {
   if (status !== "streaming" && status !== "starting") {
     return null;
   }
@@ -65,58 +77,91 @@ export const StreamAudioMixerControl: React.FC<
           </span>
         </div>
 
-        {audioMode !== "none" && (
-          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
-            <button
-              type="button"
-              onClick={() =>
-                onUpdateMix({
-                  ...audioMix,
-                  muted: !audioMix.muted,
-                })
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "12px",
+              color: "#dbdee1",
+            }}
+          >
+            Proporção:
+            <select
+              value={aspectMode}
+              onChange={(e) =>
+                onUpdateAspectMode(e.target.value as StreamAspectMode)
               }
               style={{
-                padding: "4px 10px",
+                padding: "4px 8px",
                 borderRadius: "4px",
-                border: "none",
-                background: audioMix.muted ? "#da373c" : "#383a40",
+                background: "#383a40",
                 color: "#ffffff",
+                border: "1px solid #4e5058",
                 fontSize: "12px",
-                fontWeight: 600,
                 cursor: "pointer",
               }}
             >
-              {audioMix.muted
-                ? "🔇 Áudio do Jogo Mutado"
-                : "🔊 Mutar Áudio do Jogo"}
-            </button>
+              <option value="original">Original</option>
+              <option value="stretch_16_9">Esticar 16:9</option>
+              <option value="crop_4_3_stretch_16_9">Recortar 4:3 → 16:9</option>
+            </select>
+          </label>
 
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                fontSize: "12px",
-                color: "#dbdee1",
-              }}
-            >
-              Volume do Jogo ({audioMix.volume}%):
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={audioMix.volume}
-                onChange={(e) =>
+          {audioMode !== "none" && (
+            <>
+              <button
+                type="button"
+                onClick={() =>
                   onUpdateMix({
                     ...audioMix,
-                    volume: Number(e.target.value),
+                    muted: !audioMix.muted,
                   })
                 }
-                style={{ cursor: "pointer" }}
-              />
-            </label>
-          </div>
-        )}
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: "4px",
+                  border: "none",
+                  background: audioMix.muted ? "#da373c" : "#383a40",
+                  color: "#ffffff",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {audioMix.muted
+                  ? "🔇 Áudio do Jogo Mutado"
+                  : "🔊 Mutar Áudio do Jogo"}
+              </button>
+
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontSize: "12px",
+                  color: "#dbdee1",
+                }}
+              >
+                Volume do Jogo ({audioMix.volume}%):
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={audioMix.volume}
+                  onChange={(e) =>
+                    onUpdateMix({
+                      ...audioMix,
+                      volume: Number(e.target.value),
+                    })
+                  }
+                  style={{ cursor: "pointer" }}
+                />
+              </label>
+            </>
+          )}
+        </div>
       </div>
 
       {warning && (

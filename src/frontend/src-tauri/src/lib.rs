@@ -7,7 +7,8 @@ pub mod state;
 
 use commands::audio_commands::set_stream_audio_mix;
 use commands::capture_commands::{
-    list_capture_sources, set_stream_preview_enabled, start_screen_stream, stop_screen_stream,
+    list_capture_sources, set_stream_aspect_mode, set_stream_preview_enabled, start_screen_stream,
+    stop_screen_stream,
 };
 use commands::settings_commands::{get_app_settings, save_app_settings};
 use commands::shortcut_commands::{register_global_shortcut, unregister_global_shortcut};
@@ -28,6 +29,7 @@ pub fn run() {
             start_screen_stream,
             stop_screen_stream,
             set_stream_preview_enabled,
+            set_stream_aspect_mode,
             set_stream_audio_mix,
             register_global_shortcut,
             unregister_global_shortcut

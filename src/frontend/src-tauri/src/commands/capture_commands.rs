@@ -2,7 +2,9 @@ use crate::capture::audio_wasapi::start_wasapi_audio_capture;
 use crate::capture::enumerate::list_all_capture_sources;
 use crate::capture::video_wgc::{run_wgc_capture_loop, VideoCaptureExitReason};
 use crate::media::livekit_publisher::connect_and_publish_native_stream;
-use crate::state::{AppState, CaptureSource, StreamAudioMode, StreamLifecycleStatus, StreamPreset};
+use crate::state::{
+    AppState, CaptureSource, StreamAspectMode, StreamAudioMode, StreamLifecycleStatus, StreamPreset,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -22,6 +24,8 @@ pub struct StartStreamRequest {
     pub source_id: String,
     pub preset: StreamPreset,
     pub audio_mode: StreamAudioMode,
+    #[serde(default)]
+    pub aspect_mode: StreamAspectMode,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -32,6 +36,7 @@ pub struct StreamSessionInfo {
     pub source_title: String,
     pub preset: StreamPreset,
     pub active_audio_mode: StreamAudioMode,
+    pub aspect_mode: StreamAspectMode,
     pub audio_warning: Option<String>,
 }
 
@@ -97,10 +102,14 @@ pub async fn start_screen_stream(
         active.source_title = Some(matched_source.title.clone());
         active.preset = Some(request.preset);
         active.audio_mode = Some(request.audio_mode);
+        active.aspect_mode = Some(request.aspect_mode);
         active.cancel_token = Some(cancel_token.clone());
     }
 
     state.preview_enabled.store(true, Ordering::Relaxed);
+    state
+        .aspect_mode
+        .store(request.aspect_mode.as_u8(), Ordering::Relaxed);
 
     let _ = app.emit(
         EVENT_STREAM_STATE_CHANGED,
@@ -193,6 +202,7 @@ pub async fn start_screen_stream(
         published.video_source,
         cancel_token.clone(),
         Arc::clone(&state.preview_enabled),
+        Arc::clone(&state.aspect_mode),
         move |data_url, width, height| {
             let _ = app_for_preview.emit(
                 EVENT_STREAM_PREVIEW_FRAME,
@@ -265,6 +275,7 @@ pub async fn start_screen_stream(
         source_title: matched_source.title,
         preset: request.preset,
         active_audio_mode,
+        aspect_mode: request.aspect_mode,
         audio_warning,
     })
 }
@@ -275,6 +286,18 @@ pub fn set_stream_preview_enabled(
     enabled: bool,
 ) -> Result<(), String> {
     state.preview_enabled.store(enabled, Ordering::Relaxed);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_stream_aspect_mode(
+    state: State<'_, AppState>,
+    mode: StreamAspectMode,
+) -> Result<(), String> {
+    state.aspect_mode.store(mode.as_u8(), Ordering::Relaxed);
+    if let Ok(mut active) = state.active_stream.lock() {
+        active.aspect_mode = Some(mode);
+    }
     Ok(())
 }
 
